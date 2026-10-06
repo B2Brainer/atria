@@ -1,8 +1,9 @@
 """Sesión y trazabilidad por iteración (p1 §4)."""
 
+from datetime import UTC, datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, model_validator
+from pydantic import AwareDatetime, BaseModel, Field, model_validator
 
 from atria.domain.ai import AIRequest, AIResult
 from atria.domain.information import InformationState, NonEmptyStr, Purpose
@@ -10,8 +11,15 @@ from atria.domain.reasoning import Decision, Evaluation, StateChange
 
 
 class IterationTrace(BaseModel):
-    """Los 7 campos observables de una iteración (p1 §4). Todos obligatorios."""
+    """Los 7 campos observables de una iteración (p1 §4). Todos obligatorios.
 
+    Se identifica por sesión e iteración (desde 1). No incluye el razonamiento
+    interno privado del modelo (p1 §4).
+    """
+
+    session_id: NonEmptyStr
+    iteration: int = Field(ge=1)
+    timestamp: AwareDatetime = Field(default_factory=lambda: datetime.now(UTC))
     previous_state: InformationState
     decision: Decision
     ai_request: AIRequest
