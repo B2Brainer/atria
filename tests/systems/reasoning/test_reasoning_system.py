@@ -44,6 +44,8 @@ def trace() -> IterationTrace:
     result = AIResult(content="algo")
     evaluation = reasoning.evaluate(EMPTY, result, iteration=1)
     return IterationTrace(
+        session_id="s1",
+        iteration=1,
         previous_state=EMPTY,
         decision=decision,
         ai_request=AIRequest(purpose=PURPOSE, instruction=decision.instruction),

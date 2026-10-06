@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import pytest
 from pydantic import ValidationError
 
@@ -51,6 +53,8 @@ CHANGES = [
 ]
 EVALUATION = Evaluation(verdict=Verdict.NEEDS_VALIDATION, changes=CHANGES)
 TRACE_FIELDS = {
+    "session_id": "s1",
+    "iteration": 1,
     "previous_state": STATE,
     "decision": DECISION,
     "ai_request": REQUEST,
@@ -111,6 +115,19 @@ def test_iteration_trace_requires_each_field(missing):
     fields = {k: v for k, v in TRACE_FIELDS.items() if k != missing}
     with pytest.raises(ValidationError):
         IterationTrace(**fields)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"iteration": 0},
+        {"session_id": " "},
+        {"timestamp": datetime(2026, 1, 1)},  # noqa: DTZ001 — sin zona: se rechaza
+    ],
+)
+def test_iteration_trace_rejects_invalid_identity(kwargs):
+    with pytest.raises(ValidationError):
+        IterationTrace(**(TRACE_FIELDS | kwargs))
 
 
 @pytest.mark.parametrize(
