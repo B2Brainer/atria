@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "Capa entre el usuario y las capacidades de IA."
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "pydantic>=2.13.5",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
