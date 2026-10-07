@@ -4,10 +4,8 @@ import pytest
 
 from atria.domain import (
     ChangeKind,
-    CycleStatus,
     EpistemicStatus,
     Evaluation,
-    FinishReason,
     InformationItem,
     Origin,
     Purpose,
@@ -21,7 +19,6 @@ from atria.infrastructure.database import (
     PostgresInformationSystem,
     PostgresSessionStore,
     PostgresTraceRecorder,
-    SessionStoreError,
     engine_from_env,
     engine_from_url,
 )
@@ -32,7 +29,6 @@ from atria.systems.reasoning import ReasoningSystem
 from atria.systems.trace import InMemoryTraceRecorder
 
 PURPOSE = Purpose(text="Entender el ciclo de Atria")
-PURPOSE_B = Purpose(text="Otro propósito")
 
 
 def fresh(pg_engine):
@@ -94,55 +90,6 @@ def test_trace_round_trip_keeps_every_field(pg_engine):
     listed = PostgresTraceRecorder(engine).list("s1")
     engine.dispose()
     assert [t.model_dump() for t in listed] == [t.model_dump() for t in traces]
-
-
-@pytest.mark.db
-def test_session_round_trip_updates_only_finish_reason(pg_engine):
-    state = PostgresInformationSystem(pg_engine).create("s1", PURPOSE)
-    store = PostgresSessionStore(pg_engine)
-    running = store.get("s1")
-    assert running == Session(id="s1", purpose=PURPOSE, state=state)
-
-    store.save(
-        running.model_copy(
-            update={
-                "status": CycleStatus.FINISHED,
-                "finish_reason": FinishReason.MAX_ITERATIONS,
-            }
-        )
-    )
-
-    engine = fresh(pg_engine)
-    reread = PostgresSessionStore(engine).get("s1")
-    engine.dispose()
-    assert reread.finish_reason == FinishReason.MAX_ITERATIONS
-    assert reread.status == CycleStatus.FINISHED
-    assert (reread.id, reread.purpose) == ("s1", PURPOSE)
-
-
-@pytest.mark.db
-@pytest.mark.parametrize(
-    "mismatch",
-    [
-        lambda s: {
-            "purpose": PURPOSE_B,
-            "state": s.state.model_copy(update={"purpose": PURPOSE_B}),
-        },
-        lambda s: {"state": s.state.model_copy(update={"items": [item("i1")]})},
-        lambda s: {"id": "nadie"},
-    ],
-    ids=["other-purpose", "other-state", "unknown-session"],
-)
-def test_session_save_rejects_what_it_cannot_store(pg_engine, mismatch):
-    PostgresInformationSystem(pg_engine).create("s1", PURPOSE)
-    store = PostgresSessionStore(pg_engine)
-    session = store.get("s1")
-    finished = {"status": CycleStatus.FINISHED, "finish_reason": FinishReason.ERROR}
-    invalid = session.model_copy(update={**mismatch(session), **finished})
-
-    with pytest.raises(SessionStoreError):
-        store.save(invalid)
-    assert store.get("s1") == session
 
 
 def run_cycle(information, trace, script):

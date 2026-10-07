@@ -41,11 +41,15 @@ class FinishReason(StrEnum):
 
 
 class Session(BaseModel):
+    """`max_iterations=None` deja el límite de iteraciones al que configure quien
+    ejecute el ciclo."""
+
     id: NonEmptyStr
     purpose: Purpose
     state: InformationState
     status: CycleStatus = CycleStatus.RUNNING
     finish_reason: FinishReason | None = None
+    max_iterations: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def _consistent(self) -> "Session":

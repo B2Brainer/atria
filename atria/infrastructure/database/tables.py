@@ -27,11 +27,13 @@ session = Table(
     Column("purpose", Text, nullable=False),
     Column("status", String, nullable=False),
     Column("finish_reason", String, nullable=True),
+    Column("max_iterations", Integer, nullable=True),
     Column("questions", JSONB, nullable=False),
     CheckConstraint(
         "(status = 'finished') = (finish_reason IS NOT NULL)",
         name="session_finish_reason_iff_finished",
     ),
+    CheckConstraint("max_iterations >= 1", name="session_max_iterations_positive"),
 )
 
 information_item = Table(
