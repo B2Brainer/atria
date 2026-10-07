@@ -82,5 +82,6 @@ class Orchestrator:
             state=self._information.get_state(session.id),
             status=CycleStatus.FINISHED,
             finish_reason=reason,
+            max_iterations=session.max_iterations,
         )
         return finished, build_retrospective(finished, history)

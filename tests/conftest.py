@@ -4,6 +4,7 @@ import pytest
 from sqlalchemy import text
 
 from atria.infrastructure.database import create_schema, engine_from_url
+from atria.infrastructure.database.tables import metadata
 
 TEST_URL_VARIABLE = "ATRIA_TEST_DATABASE_URL"
 
@@ -15,6 +16,8 @@ def _pg_engine_once():
     if not raw.strip():
         pytest.skip(f"{TEST_URL_VARIABLE} no está definida (ver README)")
     engine = engine_from_url(raw, TEST_URL_VARIABLE)
+    # Base desechable: se recrea porque `create_all` no altera tablas existentes.
+    metadata.drop_all(engine)
     create_schema(engine)
     yield engine
     engine.dispose()

@@ -5,10 +5,12 @@ description = "Capa entre el usuario y las capacidades de IA."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "fastapi>=0.142.2",
     "openai>=3.26.0",
     "psycopg[binary]>=3.3.6",
     "pydantic>=2.13.5",
     "sqlalchemy>=2.1.3",
+    "uvicorn>=0.54.0",
 ]
 
 [tool.pytest.ini_options]
@@ -20,6 +22,7 @@ markers = [
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
     "pytest>=9.1.1",
     "ruff>=0.16.10",
 ]
