@@ -6,13 +6,16 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "openai>=3.26.0",
+    "psycopg[binary]>=3.3.6",
     "pydantic>=2.13.5",
+    "sqlalchemy>=2.1.3",
 ]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
 markers = [
     "integration: llamada real a un proveedor externo; requiere red y credenciales",
+    "db: requiere PostgreSQL en ATRIA_TEST_DATABASE_URL (ver README)",
 ]
 
 [dependency-groups]

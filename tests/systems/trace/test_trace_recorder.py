@@ -17,6 +17,7 @@ from atria.domain import (
     StateChange,
     Verdict,
 )
+from atria.infrastructure.database import PostgresTraceRecorder
 from atria.systems.trace import InMemoryTraceRecorder, TraceError, TraceRecorder
 
 PURPOSE = Purpose(text="Entender el ciclo de Atria")
@@ -44,8 +45,10 @@ def trace(iteration: int, session_id: str = "s1") -> IterationTrace:
     return IterationTrace(session_id=session_id, iteration=iteration, **SEVEN_FIELDS)
 
 
-@pytest.fixture
-def recorder() -> TraceRecorder:
+@pytest.fixture(params=["memory", pytest.param("postgres", marks=pytest.mark.db)])
+def recorder(request) -> TraceRecorder:
+    if request.param == "postgres":
+        return PostgresTraceRecorder(request.getfixturevalue("pg_engine"))
     return InMemoryTraceRecorder()
 
 

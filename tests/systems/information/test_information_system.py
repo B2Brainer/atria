@@ -12,6 +12,7 @@ from atria.domain import (
     StateChange,
     Verdict,
 )
+from atria.infrastructure.database import PostgresInformationSystem
 from atria.systems.information import (
     InformationError,
     InformationSystem,
@@ -45,9 +46,12 @@ def evaluation(*changes: StateChange) -> Evaluation:
     return Evaluation(verdict=Verdict.ACCEPT, changes=list(changes))
 
 
-@pytest.fixture
-def system() -> InformationSystem:
-    system = InMemoryInformationSystem()
+@pytest.fixture(params=["memory", pytest.param("postgres", marks=pytest.mark.db)])
+def system(request) -> InformationSystem:
+    if request.param == "postgres":
+        system = PostgresInformationSystem(request.getfixturevalue("pg_engine"))
+    else:
+        system = InMemoryInformationSystem()
     system.create(SESSION, PURPOSE)
     return system
 
