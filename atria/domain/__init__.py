@@ -15,6 +15,11 @@ from atria.domain.reasoning import (
     StateChange,
     Verdict,
 )
+from atria.domain.retrospective import (
+    IterationSummary,
+    Retrospective,
+    build_retrospective,
+)
 from atria.domain.session import CycleStatus, FinishReason, IterationTrace, Session
 
 __all__ = [
@@ -29,11 +34,14 @@ __all__ = [
     "FinishReason",
     "InformationItem",
     "InformationState",
+    "IterationSummary",
     "IterationTrace",
     "OpenQuestion",
     "Origin",
     "Purpose",
+    "Retrospective",
     "Session",
     "StateChange",
     "Verdict",
+    "build_retrospective",
 ]
