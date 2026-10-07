@@ -40,7 +40,7 @@ class InMemoryInformationSystem(InformationSystem):
         state = self.get_state(session_id)
         applied = [change.model_copy(deep=True) for change in evaluation.changes]
         for change in applied:
-            _apply_change(state, change)
+            apply_change(state, change)
         self._states[session_id] = state
         return applied
 
@@ -51,7 +51,11 @@ class InMemoryInformationSystem(InformationSystem):
             raise InformationError(f"la sesión '{session_id}' no existe") from None
 
 
-def _apply_change(state: InformationState, change: StateChange) -> None:
+def apply_change(state: InformationState, change: StateChange) -> None:
+    """Aplica un cambio sobre `state` según las transiciones de este módulo.
+
+    Muta `state`; lo comparten todas las implementaciones del sistema de información.
+    """
     match change.kind:
         case ChangeKind.ADD_INFORMATION:
             item = change.item
