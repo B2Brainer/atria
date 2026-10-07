@@ -8,6 +8,7 @@ from atria.domain import (
     InformationState,
     Purpose,
     Session,
+    build_retrospective,
 )
 from atria.infrastructure.ai_providers.fake import FakeProvider
 from atria.orchestration import Orchestrator
@@ -41,7 +42,10 @@ class Cycle:
 
     def run(self) -> Session:
         state = self.information.create("s1", PURPOSE)
-        return self.orchestrator.run(Session(id="s1", purpose=PURPOSE, state=state))
+        session, self.retrospective = self.orchestrator.run(
+            Session(id="s1", purpose=PURPOSE, state=state)
+        )
+        return session
 
 
 def test_cycle_fulfills_purpose_after_several_iterations():
@@ -111,3 +115,32 @@ def test_finished_session_cannot_run_again():
 
     with pytest.raises(ValueError, match="ya terminó"):
         cycle.orchestrator.run(session)
+
+
+@pytest.mark.parametrize(
+    ("script", "promote", "reason"),
+    [
+        (["A", "A"], True, FinishReason.PURPOSE_FULFILLED),
+        (["uno", "dos", "tres"], False, FinishReason.MAX_ITERATIONS),
+        (["uno", AIProviderError("caído")], True, FinishReason.ERROR),
+        ([AIProviderError("caído")], True, FinishReason.ERROR),
+    ],
+)
+def test_cycle_returns_retrospective_of_final_state_and_traces(script, promote, reason):
+    cycle = Cycle(script, max_iterations=3, promote_on_repetition=promote)
+
+    session = cycle.run()
+    retrospective = cycle.retrospective
+    traces = cycle.trace.list("s1")
+    final = cycle.information.get_state("s1")
+
+    assert retrospective.finish_reason == session.finish_reason == reason
+    assert retrospective.iterations == len(traces)
+    assert retrospective.purpose == PURPOSE
+    assert retrospective.accepted_knowledge == final.accepted
+    assert retrospective.unverified == final.unverified
+    assert retrospective.open_questions == final.open_questions
+    assert [
+        (s.iteration, s.decision, s.applied_changes) for s in retrospective.summary
+    ] == [(t.iteration, t.decision, t.applied_changes) for t in traces]
+    assert build_retrospective(session, traces) == retrospective

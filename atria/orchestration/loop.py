@@ -5,11 +5,18 @@ El orquestador solo conoce los sistemas de `atria.systems`; las implementaciones
 concretas se le inyectan.
 
 Fallos: un `AIProviderError` termina la sesión con `error` antes de aplicar nada,
-así que el estado y las trazas quedan como tras la última iteración completa.
-Cualquier otro error es un defecto del sistema y se propaga.
+así que el estado y las trazas quedan como tras la última iteración completa, y
+también hay retrospectiva. Cualquier otro error es un defecto del sistema y se propaga.
 """
 
-from atria.domain import CycleStatus, FinishReason, IterationTrace, Session
+from atria.domain import (
+    CycleStatus,
+    FinishReason,
+    IterationTrace,
+    Retrospective,
+    Session,
+    build_retrospective,
+)
 from atria.systems.ai import AIProviderError, AISystem
 from atria.systems.information import InformationSystem
 from atria.systems.reasoning import ReasoningSystem
@@ -29,8 +36,11 @@ class Orchestrator:
         self._ai = ai
         self._trace = trace
 
-    def run(self, session: Session) -> Session:
-        """Ejecuta el ciclo hasta que termina y devuelve la sesión terminada.
+    def run(self, session: Session) -> tuple[Session, Retrospective]:
+        """Ejecuta el ciclo hasta que termina.
+
+        Devuelve la sesión terminada (con su motivo de finalización) y la
+        retrospectiva final que se entrega al usuario.
 
         El estado de la sesión debe existir ya en el sistema de información.
         """
@@ -66,10 +76,11 @@ class Orchestrator:
             self._trace.record(trace)
             history.append(trace)
 
-        return Session(
+        finished = Session(
             id=session.id,
             purpose=session.purpose,
             state=self._information.get_state(session.id),
             status=CycleStatus.FINISHED,
             finish_reason=reason,
         )
+        return finished, build_retrospective(finished, history)
