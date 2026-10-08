@@ -33,6 +33,8 @@ RULES = [
     ("atria.orchestration", None, ("atria.infrastructure", "atria.api")),
     ("atria", "atria.infrastructure.ai_providers", AI_SDKS),
     ("atria", "atria.infrastructure.database", ORM),
+    # Procesos externos (p. ej. la CLI de Codex, ATR-013) solo desde los adaptadores de IA.
+    ("atria", "atria.infrastructure.ai_providers", ("subprocess",)),
 ]
 
 
@@ -122,6 +124,9 @@ def test_violation_reports_file_and_line(tmp_path):
         ("atria/systems/ai/__init__.py", "from ... import infrastructure"),
         ("atria/orchestration/m.py", "from atria import infrastructure"),
         ("atria/orchestration/m.py", "def f():\n    import atria.api.app\n"),
+        ("atria/domain/m.py", "import subprocess"),
+        ("atria/systems/ai/m.py", "from subprocess import run"),
+        ("atria/api/main.py", "import subprocess"),
     ],
 )
 def test_detects_import_forms(tmp_path, relative, source):
@@ -134,6 +139,7 @@ def test_detects_import_forms(tmp_path, relative, source):
     ("relative", "source"),
     [
         ("atria/infrastructure/ai_providers/m.py", "import openai"),
+        ("atria/infrastructure/ai_providers/m.py", "import subprocess"),
         ("atria/infrastructure/database/m.py", "from sqlalchemy import Engine"),
         (
             "atria/api/main.py",
