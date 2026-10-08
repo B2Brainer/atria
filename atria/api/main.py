@@ -9,7 +9,7 @@ sin valores secretos.
 import os
 
 from atria.api.app import create_app
-from atria.infrastructure.ai_providers.openai import OpenAIProvider
+from atria.infrastructure.ai_providers.codex_cli import CodexCLIProvider
 from atria.infrastructure.database import (
     PostgresInformationSystem,
     PostgresSessionStore,
@@ -40,7 +40,7 @@ def max_iterations_from_env() -> int:
 
 def build_app():
     max_iterations = max_iterations_from_env()
-    provider = OpenAIProvider()
+    provider = CodexCLIProvider()
     engine = engine_from_env()
     create_schema(engine)
     return create_app(
