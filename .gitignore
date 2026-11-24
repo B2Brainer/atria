@@ -4,8 +4,17 @@ __pycache__/
 .venv/
 .pytest_cache/
 .ruff_cache/
+*.egg-info/
 
 # TypeScript / Node
 node_modules/
 dist/
 .vite/
+coverage/
+
+# Secrets
+.env
+.env.*
+
+# macOS
+.DS_Store
