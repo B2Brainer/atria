@@ -49,7 +49,6 @@ def test_get_for_never_stored_reference_raises(adapter):
 
 
 def test_durability_across_adapter_recreation(service, cleanup):
-    cleanup_adapter = CredentialAdapter(service=service)
     cleanup.append("ref-restart")
 
     first = CredentialAdapter(service=service)
@@ -58,7 +57,6 @@ def test_durability_across_adapter_recreation(service, cleanup):
 
     second = CredentialAdapter(service=service)
     assert second.get("ref-restart") == "persisted-secret"
-    del cleanup_adapter
 
 
 def test_forced_keychain_failure_propagates_on_store(adapter):
@@ -91,8 +89,13 @@ def test_no_subprocess_spawned_during_store_get_delete(adapter, cleanup):
         patch("subprocess.Popen", side_effect=AssertionError("subprocess.Popen invoked")),
         patch("subprocess.run", side_effect=AssertionError("subprocess.run invoked")),
         patch("os.posix_spawn", side_effect=AssertionError("os.posix_spawn invoked")),
+        patch("os.posix_spawnp", side_effect=AssertionError("os.posix_spawnp invoked")),
         patch("os.execv", side_effect=AssertionError("os.execv invoked")),
         patch("os.execve", side_effect=AssertionError("os.execve invoked")),
+        patch("os.execvp", side_effect=AssertionError("os.execvp invoked")),
+        patch("os.execvpe", side_effect=AssertionError("os.execvpe invoked")),
+        patch("os.system", side_effect=AssertionError("os.system invoked")),
+        patch("os.popen", side_effect=AssertionError("os.popen invoked")),
     ):
         adapter.store("ref-no-subprocess", "secret")
         assert adapter.get("ref-no-subprocess") == "secret"
@@ -106,7 +109,11 @@ def test_subprocess_patch_guard_is_effective():
 
 
 def test_store_uses_exact_accessibility_class_and_no_data_protection_flag(adapter, cleanup):
-    from Security import kSecAttrAccessible, kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+    from Security import (
+        kSecAttrAccessible,
+        kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+        kSecUseDataProtectionKeychain,
+    )
 
     cleanup.append("ref-accessibility")
     captured_queries: list[dict] = []
@@ -122,7 +129,12 @@ def test_store_uses_exact_accessibility_class_and_no_data_protection_flag(adapte
     assert captured_queries, "expected _sec_item_add to be invoked"
     query = captured_queries[0]
     assert query[kSecAttrAccessible] == kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-    assert all("DataProtectionKeychain" not in str(key) for key in query)
+
+    # A string/substring check on these PyObjC-bridged constants is a tautology:
+    # str(kSecUseDataProtectionKeychain) is its underlying four-char CFString
+    # code (e.g. "nleg"), never the Python constant's name. The only genuine
+    # check is object identity/equality against the actual constant.
+    assert not any(key == kSecUseDataProtectionKeychain for key in query)
 
 
 def test_no_secret_value_appears_in_adapter_source():

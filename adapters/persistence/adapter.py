@@ -7,6 +7,7 @@ internal, invoked only from those public operations.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from uuid import UUID
 
@@ -29,12 +30,30 @@ class PersistenceAdapter(PersistencePort):
         self._migrations_dir = Path(migrations_dir) if migrations_dir else _DEFAULT_MIGRATIONS_DIR
         self._engine = create_engine(f"sqlite:///{db_path}")
         self._run_migrations()
+        self._restrict_file_permissions()
+
+    def _restrict_file_permissions(self) -> None:
+        # Interaction records are local-only but unencrypted at rest; restrict
+        # the file to the owner (0600) rather than leaving it at the process
+        # umask default. No-op for ":memory:" (no file exists).
+        if self._db_path == ":memory:" or not os.path.exists(self._db_path):
+            return
+        os.chmod(self._db_path, 0o600)
 
     def _run_migrations(self) -> None:
+        # Drive Alembic off this adapter's own connection (config.attributes,
+        # read by migrations/env.py) rather than a second engine built from a
+        # `sqlalchemy.url` string. Avoids two real bugs a URL-string approach
+        # has: a ":memory:" db_path would give the migration engine and
+        # self._engine two independent, unconnected in-memory databases; and
+        # ConfigParser interpolates "%" in set_main_option values, corrupting
+        # any db_path/migrations_dir containing one.
         config = Config()
         config.set_main_option("script_location", str(self._migrations_dir))
-        config.set_main_option("sqlalchemy.url", f"sqlite:///{self._db_path}")
-        command.upgrade(config, "head")
+        with self._engine.connect() as connection:
+            config.attributes["connection"] = connection
+            command.upgrade(config, "head")
+            connection.commit()
 
     def _serialize_record(self, record: InteractionRecord) -> str:
         return record.model_dump_json()

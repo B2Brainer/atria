@@ -93,15 +93,25 @@ class CredentialAdapter(CredentialPort):
         # still the real macOS Keychain and still honors the requested
         # accessibility/protection class below. Operator-approved deviation from
         # this increment's originally-approved spec (2026-11-24).
-        query = self._base_query(reference)
-        query[kSecAttrAccessible] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        #
+        # The match query used to locate an existing item (for SecItemUpdate)
+        # deliberately omits kSecAttrAccessible: a search predicate on that
+        # attribute would fail to match an item this adapter itself created
+        # under a prior accessibility value, misreporting a legitimate update
+        # as a write failure. The attribute is set on add, and re-asserted on
+        # update via attributes_to_update instead.
+        match_query = self._base_query(reference)
+        attributes = {
+            kSecValueData: secret.encode("utf-8"),
+            kSecAttrAccessible: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+        }
 
-        add_query = dict(query)
-        add_query[kSecValueData] = secret.encode("utf-8")
+        add_query = dict(match_query)
+        add_query.update(attributes)
         status = self._sec_item_add(add_query)
 
         if status == errSecDuplicateItem:
-            status = self._sec_item_update(query, {kSecValueData: secret.encode("utf-8")})
+            status = self._sec_item_update(match_query, attributes)
 
         if status != errSecSuccess:
             raise KeychainAccessError(
@@ -109,9 +119,16 @@ class CredentialAdapter(CredentialPort):
             )
 
     def _read_keychain(self, reference: str) -> str:
-        from Security import kSecMatchLimit, kSecMatchLimitOne, kSecReturnData
+        from Security import (
+            kSecAttrAccessible,
+            kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+            kSecMatchLimit,
+            kSecMatchLimitOne,
+            kSecReturnData,
+        )
 
         query = self._base_query(reference)
+        query[kSecAttrAccessible] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         query[kSecReturnData] = True
         query[kSecMatchLimit] = kSecMatchLimitOne
 
@@ -127,7 +144,10 @@ class CredentialAdapter(CredentialPort):
         return bytes(result).decode("utf-8")
 
     def _remove_keychain(self, reference: str) -> None:
+        from Security import kSecAttrAccessible, kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+
         query = self._base_query(reference)
+        query[kSecAttrAccessible] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         status = self._sec_item_delete(query)
 
         if status == errSecItemNotFound:

@@ -1,3 +1,5 @@
+import os
+import stat
 from decimal import Decimal
 from uuid import uuid4
 
@@ -6,6 +8,7 @@ from adapters.persistence.adapter import PersistenceAdapter
 from core.interaction.models import ExecutionMetrics, InteractionRequest, InteractionResult
 from core.records.models import InteractionRecord
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import NoResultFound
 
 
 def _request() -> InteractionRequest:
@@ -67,7 +70,7 @@ def test_list_by_cycle_filters_and_returns_empty_for_unknown_cycle(adapter):
 
 
 def test_get_raises_for_unknown_record_id(adapter):
-    with pytest.raises(Exception):
+    with pytest.raises(NoResultFound):
         adapter.get(uuid4())
 
 
@@ -94,6 +97,26 @@ def test_fresh_database_migration_establishes_applied_version(db_path):
 
 def test_construction_against_fresh_database_requires_no_manual_migration(db_path):
     adapter = PersistenceAdapter(db_path)
+    record = InteractionRecord(cycle_id=uuid4(), sequence=1, request=_request())
+
+    adapter.save(record)
+
+    assert adapter.get(record.id) == record
+
+
+def test_database_file_is_restricted_to_owner_permissions(db_path):
+    PersistenceAdapter(db_path)
+
+    mode = stat.S_IMODE(os.stat(db_path).st_mode)
+    assert mode == 0o600
+
+
+def test_in_memory_database_migrates_the_same_connection_the_adapter_uses():
+    # Regression: migrations must run against PersistenceAdapter's own
+    # connection, not a second engine built from a "sqlite:///:memory:" URL
+    # string — two such engines would each open their own, unrelated
+    # in-memory database, leaving save()/get() hitting an unmigrated one.
+    adapter = PersistenceAdapter(":memory:")
     record = InteractionRecord(cycle_id=uuid4(), sequence=1, request=_request())
 
     adapter.save(record)

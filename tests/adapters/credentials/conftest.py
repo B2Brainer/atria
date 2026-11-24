@@ -10,7 +10,7 @@ if sys.platform != "darwin":
         allow_module_level=True,
     )
 
-from adapters.credentials.adapter import CredentialAdapter
+from adapters.credentials.adapter import CredentialAdapter, KeychainItemNotFoundError
 
 TEST_SERVICE_PREFIX = "com.atria.credentials.test"
 
@@ -32,5 +32,5 @@ def cleanup(adapter):
     for reference in created:
         try:
             adapter.delete(reference)
-        except Exception:
-            pass
+        except KeychainItemNotFoundError:
+            pass  # already deleted by the test itself — expected, not a leak

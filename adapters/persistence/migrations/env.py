@@ -1,30 +1,27 @@
-"""Alembic environment: always runs online, against the URL PersistenceAdapter sets.
+"""Alembic environment: runs online, against the connection PersistenceAdapter passes.
 
 No ``alembic.ini`` file is used — ``PersistenceAdapter`` builds an in-memory
-``alembic.config.Config`` and sets ``sqlalchemy.url``/``script_location``
-programmatically before invoking ``alembic.command.upgrade``.
+``alembic.config.Config`` and passes its own live SQLAlchemy connection via
+``config.attributes["connection"]`` (never a ``sqlalchemy.url`` string), so
+migrations always run against the exact same connection/engine the adapter
+uses for ``save``/``get``/``list_by_cycle`` — correct even for a `:memory:`
+database, where a second engine built from a URL string would open its own,
+unrelated in-memory database.
 """
 
 from __future__ import annotations
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
 
 config = context.config
 target_metadata = None
 
 
 def run_migrations_online() -> None:
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
-    with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
-        with context.begin_transaction():
-            context.run_migrations()
-    connectable.dispose()
+    connection = config.attributes["connection"]
+    context.configure(connection=connection, target_metadata=target_metadata)
+    with context.begin_transaction():
+        context.run_migrations()
 
 
 run_migrations_online()
