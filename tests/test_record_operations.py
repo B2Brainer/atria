@@ -20,6 +20,10 @@ def test_register_interaction_saves_the_record_exactly_once():
 
     records._register_interaction(record)
 
+    # Asserting only end-state (get()/list_by_cycle()) still passes if save()
+    # were called twice with the same record — the fake overwrites by id. The
+    # call count is what actually proves "exactly once".
+    assert persistence.save_calls == [record.id]
     assert persistence.get(record.id) == record
     assert len(persistence.list_by_cycle(cycle_id)) == 1
 

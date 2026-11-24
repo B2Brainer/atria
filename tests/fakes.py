@@ -12,8 +12,10 @@ from core.records.models import InteractionRecord
 class FakePersistencePort(PersistencePort):
     def __init__(self) -> None:
         self._records: dict[UUID, InteractionRecord] = {}
+        self.save_calls: list[UUID] = []
 
     def save(self, record: InteractionRecord) -> None:
+        self.save_calls.append(record.id)
         self._records[record.id] = record
 
     def get(self, record_id: UUID) -> InteractionRecord:

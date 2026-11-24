@@ -22,8 +22,24 @@ def test_initiate_returns_a_record_matching_the_request_and_provider_result():
 
     record = interaction.initiate(request)
 
-    assert record.request.input == request.input
+    assert record.request == request
     assert record.result == expected_result
+
+
+def test_initiate_isolates_the_record_from_later_mutation_of_the_original_request():
+    provider = FakeAIProviderPort(InteractionResult(output="ok", status="success"))
+    credentials = FakeCredentialPort()
+    records = InteractionRecordManagement(FakePersistencePort())
+    interaction = InteractionManagement(uuid4(), provider, credentials, records)
+    request = _request()
+
+    record = interaction.initiate(request)
+    request.parameters["mutated"] = True
+
+    # A clean interaction must not carry state back from the original request
+    # object: the stored record's request is an isolated copy, not a shared
+    # reference that a later mutation of the caller's object could corrupt.
+    assert "mutated" not in record.request.parameters
 
 
 def test_initiate_fetches_the_credential_before_invoking_the_provider():
