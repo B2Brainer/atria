@@ -94,6 +94,7 @@ class PersistenceAdapter(PersistencePort):
         # or `-wal`/`-shm` sidecar copying itself.
         backups_dir = Path(self._db_path).resolve().parent / "backups"
         backups_dir.mkdir(parents=True, exist_ok=True)
+        os.chmod(backups_dir, 0o700)
         db_name = Path(self._db_path).name
         backup_path = backups_dir / f"{db_name}.{time.strftime('%Y%m%dT%H%M%S')}.bak"
 
@@ -101,6 +102,12 @@ class PersistenceAdapter(PersistencePort):
         # "begin once" connection mode would otherwise wrap it in one.
         with self._engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
             connection.execute(text("VACUUM INTO :path"), {"path": str(backup_path)})
+
+        # A backup is a full copy of the same (unencrypted-at-rest)
+        # InteractionRecord data _restrict_file_permissions() already
+        # restricts for the live database file; match that here rather than
+        # leaving it at the process umask default.
+        os.chmod(backup_path, 0o600)
 
         logger.info("pre-migration backup written to %s", backup_path)
 

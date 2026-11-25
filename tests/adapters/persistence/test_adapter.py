@@ -322,6 +322,8 @@ def test_backup_is_written_before_a_pending_migration_applies(tmp_path, db_path)
 
     backups = list(backups_dir.iterdir())
     assert len(backups) == 1
+    assert stat.S_IMODE(os.stat(backups[0]).st_mode) == 0o600
+    assert stat.S_IMODE(os.stat(backups_dir).st_mode) == 0o700
 
 
 def test_backup_restores_to_a_readable_consistent_database(tmp_path, db_path):
