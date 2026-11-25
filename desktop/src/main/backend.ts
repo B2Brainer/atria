@@ -204,9 +204,16 @@ export class BackendClient {
       this.preventUnhandledRejection(this.ready);
     };
 
-    child.on("exit", (code) => {
+    child.on("exit", (code, signal) => {
       if (child !== this.process) return;
-      this.onLog(`backend process exited (code ${code ?? "unknown"})`);
+      // A null code with a non-null signal means the OS terminated the
+      // process (e.g. a SIGKILL from an out-of-memory condition or a
+      // macOS code-signing/execution policy refusal) rather than the
+      // process exiting on its own — worth distinguishing from an
+      // ordinary non-zero exit code.
+      this.onLog(
+        `backend process exited (code ${code ?? "unknown"}${signal ? `, signal ${signal}` : ""})`,
+      );
       onProcessFailure(
         new BackendUnavailableError("backend process exited while a request was pending"),
       );
