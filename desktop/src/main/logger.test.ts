@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { installCrashCapture, LOG_BACKUP_COUNT, Logger } from "./logger";
 
@@ -44,15 +44,29 @@ describe("Logger", () => {
     expect(existsSync(logPath)).toBe(true);
   });
 
-  it("captures an uncaught exception as a log record", () => {
+  it("captures an uncaught exception as a log record, then terminates the process", () => {
     const logger = new Logger(logPath);
+    // installCrashCapture's uncaughtException handler calls process.exit(1)
+    // after logging (restoring the default Node behavior its own listener
+    // would otherwise suppress) -- stub it so this test doesn't kill the
+    // test runner, and assert it was actually called.
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit called");
+    }) as never);
     installCrashCapture(logger);
 
-    process.emit("uncaughtException", new Error("boom"));
+    expect(() => process.emit("uncaughtException", new Error("boom"))).toThrow(
+      "process.exit called",
+    );
 
     const lines = readFileSync(logPath, "utf8").trim().split("\n");
     const record = JSON.parse(lines[lines.length - 1]);
     expect(record.level).toBe("ERROR");
     expect(record.error).toBe("boom");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+
+    process.removeAllListeners("uncaughtException");
+    process.removeAllListeners("unhandledRejection");
+    exitSpy.mockRestore();
   });
 });

@@ -55,8 +55,17 @@ export function installCrashCapture(logger: Logger): void {
       error: error.message,
       stack: error.stack,
     });
+    // Attaching this handler suppresses Node's own default behavior for an
+    // uncaught exception (print + terminate) -- per spec, the exception is
+    // "captured ... before the process exits", not captured in place of
+    // exiting. Logger's writes are synchronous (writeFileSync), so the
+    // record above is already durable before this runs.
+    process.exit(1);
   });
   process.on("unhandledRejection", (reason) => {
+    // Lower severity than an uncaught exception by convention (and not
+    // what the spec's "process exits" language describes): logged, but
+    // does not itself terminate the process.
     logger.error("unhandled promise rejection in Electron main process", {
       error: reason instanceof Error ? reason.message : String(reason),
     });
