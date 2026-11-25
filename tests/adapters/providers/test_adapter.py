@@ -269,6 +269,26 @@ def test_execute_raises_when_the_response_body_cannot_be_parsed():
         adapter.execute(_request())
 
 
+def test_parse_error_exception_carries_no_chained_raw_response_body():
+    # A json.JSONDecodeError's .doc attribute holds the FULL raw response
+    # text that failed to parse — chaining it (via `from exc`, or implicitly
+    # via __context__) would carry that raw body on the raised
+    # ProviderResponseError's exception chain, same class of defect as the
+    # network-failure case above, just on the parse-error sibling site.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="not json, contains sk-secret too")
+
+    adapter = AIProviderAdapter(
+        _configurations(), _FakeCredentialPort({"openai-key": "sk-secret"}), client=_client(handler)
+    )
+
+    with pytest.raises(ProviderResponseError) as excinfo:
+        adapter.execute(_request())
+
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None
+
+
 def test_send_request_never_disables_tls_verification_and_sets_an_explicit_timeout():
     adapter = AIProviderAdapter(
         _configurations(),
@@ -391,11 +411,12 @@ def test_send_request_timeout_is_actually_enforced_against_a_stalling_server():
                 credential_reference="openai-key",
             )
         }
+        # http://127.0.0.1 is allowed without any flag: a local loopback host
+        # is never a real external AI provider, so it's exempt by what it IS.
         adapter = AIProviderAdapter(
             configurations,
             _FakeCredentialPort({"openai-key": "sk-secret"}),
             timeout=0.2,
-            require_https=False,  # local plain-TCP loopback stub only; never do this in production
         )
 
         start = time.monotonic()

@@ -28,6 +28,7 @@ from __future__ import annotations
 import time
 from collections.abc import Mapping
 from decimal import Decimal
+from urllib.parse import urlsplit
 
 import httpx
 from core.interaction.models import (
@@ -47,6 +48,12 @@ DEFAULT_TIMEOUT = 30.0
 PRICING_PER_MILLION_TOKENS: dict[str, tuple[Decimal, Decimal]] = {
     "gpt-4o-mini": (Decimal("0.15"), Decimal("0.60")),
 }
+
+# A production ProviderConfiguration.endpoint must be HTTPS; a bare local
+# loopback host is the one universal, well-known exception (no real external
+# AI provider is ever reachable at these hosts), so it needs no configurable
+# flag — nothing a caller could misuse against a real endpoint.
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
 class InsecureEndpointError(ValueError):
@@ -80,14 +87,10 @@ class AIProviderAdapter(AIProviderPort):
         credentials: CredentialPort,
         timeout: float = DEFAULT_TIMEOUT,
         client: httpx.Client | None = None,
-        require_https: bool = True,
     ) -> None:
         self._providers = providers
         self._credentials = credentials
         self._timeout = timeout
-        # Test-only escape hatch (e.g. a real loopback TCP stub with no TLS
-        # endpoint of its own): production call sites must never pass False.
-        self._require_https = require_https
         # TLS certificate validation is httpx's default (verify=True) and is never
         # disabled here; an injected client (tests) carries its own transport but
         # still goes through this same, unmodified verification path.
@@ -106,12 +109,7 @@ class AIProviderAdapter(AIProviderPort):
                 f"no ProviderConfiguration registered for {request.provider_id!r}"
             ) from None
 
-        if self._require_https and not configuration.endpoint.startswith("https://"):
-            # The Bearer credential below would otherwise go out in plaintext.
-            raise InsecureEndpointError(
-                f"ProviderConfiguration.endpoint for {request.provider_id!r} is not HTTPS: "
-                f"{configuration.endpoint!r}"
-            )
+        self._require_https_or_loopback(configuration.endpoint, request.provider_id)
 
         secret = self._credentials.get(configuration.credential_reference)
 
@@ -126,6 +124,21 @@ class AIProviderAdapter(AIProviderPort):
 
         return self._client.build_request(
             "POST", configuration.endpoint, json=body, headers=headers, timeout=self._timeout
+        )
+
+    def _require_https_or_loopback(self, endpoint: str, provider_id: str) -> None:
+        # The Bearer credential would otherwise go out in plaintext. The one
+        # exemption is a local loopback host — no real external AI provider
+        # is ever reachable there, so it's exempt by what it IS, not by a
+        # configurable flag a production call site could misuse.
+        parsed = urlsplit(endpoint)
+        if parsed.scheme == "https":
+            return
+        if parsed.scheme == "http" and parsed.hostname in _LOOPBACK_HOSTS:
+            return
+        raise InsecureEndpointError(
+            f"ProviderConfiguration.endpoint for {provider_id!r} is not HTTPS "
+            f"(and not a local loopback host): {endpoint!r}"
         )
 
     def _send_request(self, prepared_request: httpx.Request) -> httpx.Response:
@@ -157,15 +170,23 @@ class AIProviderAdapter(AIProviderPort):
         return response
 
     def _normalize_response(self, response: httpx.Response, model_id: str) -> InteractionResult:
+        # error/payload/output set inside the except/try below, then
+        # raised/used AFTER it — same reasoning as _send_request: a
+        # json.JSONDecodeError's .doc (or a UnicodeDecodeError's .object)
+        # carries the full raw response body, so chaining the original
+        # exception here (implicitly or via `from exc`) would put that body
+        # on this exception's __cause__/__context__, not just a safe message.
+        error: ProviderResponseError | None = None
+        payload = output = None
         try:
             payload = response.json()
             output = payload["choices"][0]["message"]["content"]
             if not isinstance(output, str):
                 raise TypeError(f"expected a string message content, got {type(output).__name__}")
         except (ValueError, KeyError, IndexError, TypeError) as exc:
-            raise ProviderResponseError(
-                f"provider response could not be parsed: {exc}"
-            ) from exc
+            error = ProviderResponseError(f"provider response could not be parsed: {exc}")
+        if error is not None:
+            raise error
 
         metrics = self._derive_metrics(payload, response, model_id)
         return InteractionResult(output=output, status="success", metrics=metrics)
@@ -185,13 +206,17 @@ class AIProviderAdapter(AIProviderPort):
             # than reporting a partial/fabricated ExecutionMetrics.
             return None
 
+        error: ProviderResponseError | None = None
+        input_tokens = output_tokens = None
         try:
             input_tokens = usage["prompt_tokens"]
             output_tokens = usage["completion_tokens"]
         except KeyError as exc:
-            raise ProviderResponseError(
+            error = ProviderResponseError(
                 f"provider response usage data could not be parsed: {exc}"
-            ) from exc
+            )
+        if error is not None:
+            raise error
 
         input_price, output_price = pricing
         cost = (input_tokens * input_price + output_tokens * output_price) / Decimal(1_000_000)
