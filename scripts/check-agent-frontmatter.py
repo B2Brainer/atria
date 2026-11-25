@@ -13,6 +13,9 @@ import re
 import sys
 from pathlib import Path
 
+# Kept in sync by hand with Claude Code's built-in tool names. Update this
+# set when a new built-in tool ships — an unrecognized-but-legitimate name
+# is reported as an error rather than silently accepted (see check_file).
 KNOWN_TOOLS = {
     "Read",
     "Glob",
@@ -30,27 +33,40 @@ KNOWN_TOOLS_LOWER = {t.lower(): t for t in KNOWN_TOOLS}
 
 AGENTS_DIR = Path(__file__).resolve().parent.parent / ".claude" / "agents"
 
+# A YAML block list: `tools:` on its own line, followed by one or more
+# `  - Item` lines.
+_BLOCK_LIST_RE = re.compile(r"^tools:[ \t]*\r?\n((?:^[ \t]+-[ \t]*.+\r?\n?)+)", re.MULTILINE)
+_INLINE_RE = re.compile(r"^tools:[ \t]*(.+)$", re.MULTILINE)
 
-def extract_tools_line(text: str) -> str | None:
+
+def extract_tools_tokens(text: str) -> list[str] | None:
     if not text.startswith("---"):
         return None
     end = text.find("\n---", 3)
     if end == -1:
         return None
     frontmatter = text[3:end]
-    match = re.search(r"^tools:\s*(.+)$", frontmatter, re.MULTILINE)
-    return match.group(1).strip() if match else None
+
+    block_match = _BLOCK_LIST_RE.search(frontmatter)
+    if block_match:
+        items = re.findall(r"^[ \t]+-[ \t]*(.+?)\s*$", block_match.group(1), re.MULTILINE)
+        return [item.strip() for item in items if item.strip()]
+
+    inline_match = _INLINE_RE.search(frontmatter)
+    if inline_match:
+        raw = inline_match.group(1).strip().strip("[]")
+        return [t.strip().strip("[]").strip() for t in raw.split(",") if t.strip()]
+
+    return None
 
 
 def check_file(path: Path) -> list[str]:
     errors: list[str] = []
-    raw = extract_tools_line(path.read_text())
-    if raw is None:
+    tokens = extract_tools_tokens(path.read_text())
+    if tokens is None:
         errors.append(f"{path}: no `tools:` frontmatter field found")
         return errors
 
-    tokens = [t.strip().strip("[]").strip() for t in raw.strip("[]").split(",")]
-    tokens = [t for t in tokens if t]
     if not tokens:
         errors.append(f"{path}: `tools:` field is empty")
         return errors
