@@ -1,6 +1,7 @@
 import os
 import stat
 from decimal import Decimal
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -269,3 +270,107 @@ def downgrade() -> None:
     with engine.connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
     assert version == "0002"
+
+
+def _write_v2_migration(versions_dir: Path) -> None:
+    (versions_dir / "0002_add_note_column.py").write_text(
+        '''
+revision = "0002"
+down_revision = "0001"
+branch_labels = None
+depends_on = None
+
+import sqlalchemy as sa
+from alembic import op
+
+
+def upgrade() -> None:
+    op.add_column("interaction_records", sa.Column("note", sa.String, nullable=True))
+
+
+def downgrade() -> None:
+    op.drop_column("interaction_records", "note")
+'''
+    )
+
+
+def _scaffold_migrations(tmp_path, name: str) -> Path:
+    migrations_root = tmp_path / name
+    migrations_root.mkdir()
+    versions_dir = migrations_root / "versions"
+    versions_dir.mkdir()
+
+    base = Path(__file__).resolve().parents[3] / "adapters" / "persistence" / "migrations"
+    (migrations_root / "env.py").write_text((base / "env.py").read_text())
+    initial_source = (base / "versions" / "0001_initial.py").read_text()
+    (versions_dir / "0001_initial.py").write_text(initial_source)
+    return migrations_root
+
+
+def test_backup_is_written_before_a_pending_migration_applies(tmp_path, db_path):
+    migrations_root = _scaffold_migrations(tmp_path, "migrations_backup")
+    first = PersistenceAdapter(db_path, migrations_dir=migrations_root)
+    record = InteractionRecord(cycle_id=uuid4(), sequence=1, request=_request(), result=_result())
+    first.save(record)
+    del first
+
+    backups_dir = Path(db_path).parent / "backups"
+    assert not backups_dir.exists() or list(backups_dir.iterdir()) == []
+
+    _write_v2_migration(migrations_root / "versions")
+    PersistenceAdapter(db_path, migrations_dir=migrations_root)
+
+    backups = list(backups_dir.iterdir())
+    assert len(backups) == 1
+    assert stat.S_IMODE(os.stat(backups[0]).st_mode) == 0o600
+    assert stat.S_IMODE(os.stat(backups_dir).st_mode) == 0o700
+
+
+def test_backup_restores_to_a_readable_consistent_database(tmp_path, db_path):
+    migrations_root = _scaffold_migrations(tmp_path, "migrations_restore")
+    first = PersistenceAdapter(db_path, migrations_dir=migrations_root)
+    record = InteractionRecord(cycle_id=uuid4(), sequence=1, request=_request(), result=_result())
+    first.save(record)
+    del first
+
+    _write_v2_migration(migrations_root / "versions")
+    PersistenceAdapter(db_path, migrations_dir=migrations_root)
+
+    backups_dir = Path(db_path).parent / "backups"
+    backups = list(backups_dir.iterdir())
+    assert len(backups) == 1
+
+    restored_path = tmp_path / "restored.sqlite3"
+    restored_path.write_bytes(backups[0].read_bytes())
+
+    engine = create_engine(f"sqlite:///{restored_path}")
+    with engine.connect() as connection:
+        version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+        row_payload = connection.execute(
+            text("SELECT payload FROM interaction_records WHERE id = :id"),
+            {"id": str(record.id)},
+        ).scalar_one()
+
+    assert version == "0001"  # pre-migration revision, not the post-migration "0002"
+    assert InteractionRecord.model_validate_json(row_payload) == record
+
+
+def test_no_backup_on_first_run(db_path):
+    PersistenceAdapter(db_path)
+
+    backups_dir = Path(db_path).parent / "backups"
+    assert not backups_dir.exists()
+
+
+def test_no_backup_when_database_already_at_head(db_path):
+    PersistenceAdapter(db_path)
+    PersistenceAdapter(db_path)  # reconstruction against an already-current database
+
+    backups_dir = Path(db_path).parent / "backups"
+    assert not backups_dir.exists() or list(backups_dir.iterdir()) == []
+
+
+def test_in_memory_database_takes_no_backup():
+    # No file ever exists for ":memory:"; _backup_before_migration must not
+    # attempt to back it up (and must not raise).
+    PersistenceAdapter(":memory:")

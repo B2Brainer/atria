@@ -64,6 +64,13 @@ export class BackendClient {
     // needs a short bound, not the real 10s default, to exercise the
     // readiness-rejection path in a reasonable test runtime.
     private readonly readyTimeoutMs: number = DEFAULT_READY_TIMEOUT_MS,
+    // Merged on top of this process's own env (Increment 6): a packaged
+    // build sets ATRIA_DB_PATH/ATRIA_LOG_PATH here so the backend writes to
+    // an OS-appropriate, writable, update-safe location instead of its
+    // dev-mode repo-relative defaults — which, inside a packaged .app
+    // bundle, would resolve under Contents/Resources (read-only once
+    // signed, and wiped on every update).
+    private readonly extraEnv: Record<string, string> = {},
   ) {}
 
   async start(): Promise<void> {
@@ -91,7 +98,10 @@ export class BackendClient {
   }
 
   private spawnAndWaitReady(): Promise<void> {
-    const child = spawn(this.command, this.args, { cwd: this.cwd });
+    const child = spawn(this.command, this.args, {
+      cwd: this.cwd,
+      env: { ...process.env, ...this.extraEnv },
+    });
     this.process = child;
 
     const stdoutLines = createInterface({ input: child.stdout });

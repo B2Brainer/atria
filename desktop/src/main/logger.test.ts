@@ -1,0 +1,97 @@
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { installCrashCapture, LOG_BACKUP_COUNT, Logger } from "./logger";
+
+describe("Logger", () => {
+  let dir: string;
+  let logPath: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(path.join(tmpdir(), "atria-logger-"));
+    logPath = path.join(dir, "atria-main.log");
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("writes a JSON line per record", () => {
+    const logger = new Logger(logPath);
+    logger.info("hello", { source: "test" });
+
+    const lines = readFileSync(logPath, "utf8").trim().split("\n");
+    expect(lines).toHaveLength(1);
+    const record = JSON.parse(lines[0]);
+    expect(record.message).toBe("hello");
+    expect(record.level).toBe("INFO");
+    expect(record.source).toBe("test");
+  });
+
+  it("rotates once the active file reaches the configured size, retaining at most LOG_BACKUP_COUNT files", () => {
+    const logger = new Logger(logPath);
+    const chunk = "x".repeat(2000);
+    for (let i = 0; i < 12000; i += 1) {
+      logger.info(chunk);
+    }
+
+    const rotated = [1, 2, 3, 4].filter((n) => existsSync(`${logPath}.${n}`));
+    expect(rotated.length).toBeLessThanOrEqual(LOG_BACKUP_COUNT);
+    expect(existsSync(`${logPath}.${LOG_BACKUP_COUNT + 1}`)).toBe(false);
+    expect(existsSync(logPath)).toBe(true);
+  });
+
+  it("captures an uncaught exception as a log record, then terminates the process", () => {
+    const logger = new Logger(logPath);
+    // installCrashCapture's uncaughtException handler calls process.exit(1)
+    // after logging (restoring the default Node behavior its own listener
+    // would otherwise suppress) -- stub it so this test doesn't kill the
+    // test runner, and assert it was actually called.
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit called");
+    }) as never);
+    installCrashCapture(logger);
+
+    expect(() => process.emit("uncaughtException", new Error("boom"))).toThrow(
+      "process.exit called",
+    );
+
+    const lines = readFileSync(logPath, "utf8").trim().split("\n");
+    const record = JSON.parse(lines[lines.length - 1]);
+    expect(record.level).toBe("ERROR");
+    expect(record.error).toBe("boom");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+
+    process.removeAllListeners("uncaughtException");
+    process.removeAllListeners("unhandledRejection");
+    exitSpy.mockRestore();
+  });
+
+  it("captures an unhandled promise rejection as a log record, then terminates the process", () => {
+    const logger = new Logger(logPath);
+    // Node's own default for an unhandled rejection with no listener at all
+    // is to terminate the process (since Node 15) -- installCrashCapture's
+    // listener must not silently suppress that by logging without exiting.
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit called");
+    }) as never);
+    installCrashCapture(logger);
+
+    expect(() =>
+      process.emit("unhandledRejection", new Error("rejected"), Promise.reject().catch(() => {})),
+    ).toThrow("process.exit called");
+
+    const lines = readFileSync(logPath, "utf8").trim().split("\n");
+    const record = JSON.parse(lines[lines.length - 1]);
+    expect(record.level).toBe("ERROR");
+    expect(record.error).toBe("rejected");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+
+    process.removeAllListeners("uncaughtException");
+    process.removeAllListeners("unhandledRejection");
+    exitSpy.mockRestore();
+  });
+});

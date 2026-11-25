@@ -13,9 +13,12 @@
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "test": "vitest run",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "package:prepare-python": "bash scripts/build-python-dist.sh",
+    "package:mac": "npm run build && npm run package:prepare-python && electron-builder --mac --config electron-builder.yml"
   },
   "devDependencies": {
+    "@electron/notarize": "^3.0.0",
     "@eslint/js": "^10.0.1",
     "@testing-library/jest-dom": "^8.0.0",
     "@testing-library/react": "^16.3.3",
@@ -24,6 +27,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.3.0",
     "electron": "^45.5.0",
+    "electron-builder": "^26.0.19",
     "electron-vite": "^6.0.0",
     "eslint": "^10.15.0",
     "jsdom": "^31.0.1",

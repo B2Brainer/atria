@@ -4,10 +4,33 @@ import { app, BrowserWindow, dialog } from "electron";
 
 import { BackendClient } from "./backend";
 import { registerIpcHandlers } from "./ipc";
+import { installCrashCapture, Logger } from "./logger";
+
+// A distinct override name from the Python backend's own `ATRIA_LOG_PATH`
+// (api/config.py): the backend subprocess inherits this process's env plus
+// whatever override startBackend() computes for it below, so reusing the
+// same variable name here would make an operator's one `ATRIA_LOG_PATH`
+// override point both processes at the same file, which neither rotates
+// cooperatively.
+const logger = new Logger(
+  process.env.ATRIA_MAIN_LOG_PATH ?? path.join(app.getPath("logs"), "atria-main.log"),
+);
+installCrashCapture(logger);
 
 // The repository root (one level above `desktop/`), where `python -m api`
 // must be invoked from so its `core`/`adapters`/`api` package imports resolve.
+// In a packaged build there is no repository checkout: the bundled backend
+// (standalone Python runtime + `core`/`adapters`/`api` source, Increment 6)
+// ships under `process.resourcesPath/backend` instead, via electron-builder's
+// `extraResources`.
 const repoRoot = path.resolve(app.getAppPath(), "..");
+const packagedBackendDir = path.join(process.resourcesPath, "backend");
+const packagedPythonExecutable = path.join(
+  process.resourcesPath,
+  "python-dist",
+  "bin",
+  "python3",
+);
 
 let backend: BackendClient | null = null;
 let mainWindow: BrowserWindow | null = null;
@@ -32,13 +55,73 @@ function createWindow(): void {
 }
 
 async function startBackend(): Promise<void> {
-  const pythonCommand = process.env.ATRIA_PYTHON ?? "uv";
-  const pythonArgs =
-    process.env.ATRIA_PYTHON != null ? ["-m", "api"] : ["run", "python", "-m", "api"];
+  let pythonCommand: string;
+  let pythonArgs: string[];
+  let cwd: string;
 
-  backend = new BackendClient(pythonCommand, pythonArgs, repoRoot, (line) => {
-    console.error(`[atria-backend] ${line}`);
-  });
+  if (process.env.ATRIA_PYTHON != null) {
+    // Test/override hook (established in Increment 5): an explicit
+    // interpreter path, invoked directly with no `uv run` wrapper. Still
+    // respects app.isPackaged for cwd: a packaged build has no repository
+    // checkout at all, so an operator debugging a packaged build with a
+    // custom interpreter still needs the bundled backend source's cwd, not
+    // repoRoot (which would not exist).
+    pythonCommand = process.env.ATRIA_PYTHON;
+    pythonArgs = ["-m", "api"];
+    cwd = app.isPackaged ? packagedBackendDir : repoRoot;
+  } else if (app.isPackaged) {
+    // Packaged build (Increment 6): spawn the bundled, standalone Python
+    // runtime against the bundled backend source — no `uv`/dev Python
+    // installation required on the target machine.
+    pythonCommand = packagedPythonExecutable;
+    pythonArgs = ["-m", "api"];
+    cwd = packagedBackendDir;
+  } else {
+    // Development: the repository's own `uv`-managed environment.
+    pythonCommand = "uv";
+    pythonArgs = ["run", "python", "-m", "api"];
+    cwd = repoRoot;
+  }
+
+  // Applies whenever the backend runs packaged (independent of which branch
+  // above picked the interpreter/cwd — ATRIA_PYTHON or the bundled runtime):
+  // its database/log/backup locations must NOT fall back to their dev-mode
+  // defaults (repo-root-relative, which here would resolve under the signed
+  // .app bundle's own Contents/Resources — read-only once signed, and
+  // replaced wholesale on every update). An operator's own explicit
+  // ATRIA_DB_PATH/ATRIA_LOG_PATH (api/config.py's established override
+  // mechanism) still wins — this only fills in a default, never clobbers one
+  // already present in this process's own environment.
+  const backendEnv: Record<string, string> = {};
+  if (app.isPackaged) {
+    const userDataDir = app.getPath("userData");
+    if (process.env.ATRIA_DB_PATH == null) {
+      backendEnv.ATRIA_DB_PATH = path.join(userDataDir, "atria.sqlite3");
+    }
+    if (process.env.ATRIA_LOG_PATH == null) {
+      backendEnv.ATRIA_LOG_PATH = path.join(userDataDir, "logs", "atria-backend.log");
+    }
+  }
+
+  backend = new BackendClient(
+    pythonCommand,
+    pythonArgs,
+    cwd,
+    (line) => {
+      console.error(`[atria-backend] ${line}`);
+      // A heuristic level, not a parsed one: the backend's own structured
+      // JSON log file (api/logging_config.py) carries the real level per
+      // record — this only keeps an obviously-failing line from being
+      // filed as INFO in the Electron main process's own log.
+      if (/\b(ERROR|CRITICAL|Traceback)\b/.test(line)) {
+        logger.error(line, { source: "backend" });
+      } else {
+        logger.info(line, { source: "backend" });
+      }
+    },
+    undefined,
+    backendEnv,
+  );
   await backend.start();
   registerIpcHandlers(backend);
 }

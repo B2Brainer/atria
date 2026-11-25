@@ -7,12 +7,17 @@ internal, invoked only from those public operations.
 
 from __future__ import annotations
 
+import logging
 import os
+import time
+import uuid
 from pathlib import Path
 from uuid import UUID
 
 from alembic import command
 from alembic.config import Config
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from core.ports.persistence import PersistencePort
 from core.records.models import InteractionRecord
 from sqlalchemy import create_engine, select, text
@@ -22,6 +27,8 @@ from sqlalchemy.orm import Session
 from adapters.persistence.models import InteractionRecordRow
 
 _DEFAULT_MIGRATIONS_DIR = Path(__file__).resolve().parent / "migrations"
+
+logger = logging.getLogger(__name__)
 
 
 class PersistenceAdapter(PersistencePort):
@@ -54,10 +61,64 @@ class PersistenceAdapter(PersistencePort):
         config.set_main_option(
             "script_location", str(self._migrations_dir).replace("%", "%%")
         )
+        self._backup_before_migration(config)
         with self._engine.connect() as connection:
             config.attributes["connection"] = connection
             command.upgrade(config, "head")
             connection.commit()
+
+    def _backup_before_migration(self, config: Config) -> None:
+        # Skipped entirely for ":memory:" (no file exists to back up) and for
+        # a not-yet-existing database file (first run: nothing to protect).
+        if self._db_path == ":memory:" or not os.path.exists(self._db_path):
+            return
+
+        script = ScriptDirectory.from_config(config)
+        head = script.get_current_head()
+        with self._engine.connect() as connection:
+            current = MigrationContext.configure(connection).get_current_revision()
+
+        if current == head:
+            return
+
+        self._write_backup()
+
+    def _write_backup(self) -> None:
+        # A plain `shutil.copy()` of the main database file alone is not
+        # sufficient: SQLite (whatever this engine's journal mode — rollback
+        # journal or WAL) can leave the main file, on its own, in a state
+        # that is not an independently consistent snapshot while a journal/
+        # WAL sidecar exists alongside it. `VACUUM INTO` asks SQLite itself
+        # to produce a complete, self-consistent copy of the live database
+        # (equivalent to a hot backup), correct regardless of journal mode,
+        # without requiring this adapter to special-case WAL checkpointing
+        # or `-wal`/`-shm` sidecar copying itself.
+        backups_dir = Path(self._db_path).resolve().parent / "backups"
+        backups_dir.mkdir(parents=True, exist_ok=True)
+        os.chmod(backups_dir, 0o700)
+        db_name = Path(self._db_path).name
+        # A short random suffix alongside the second-resolution timestamp:
+        # VACUUM INTO refuses to overwrite an existing destination file, so
+        # two backups within the same second (unlikely but not impossible --
+        # e.g. two short-lived PersistenceAdapter instances in quick
+        # succession) would otherwise collide and make the second one fail.
+        backup_path = (
+            backups_dir
+            / f"{db_name}.{time.strftime('%Y%m%dT%H%M%S')}.{uuid.uuid4().hex[:8]}.bak"
+        )
+
+        # VACUUM INTO cannot run inside a transaction; SQLAlchemy's default
+        # "begin once" connection mode would otherwise wrap it in one.
+        with self._engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+            connection.execute(text("VACUUM INTO :path"), {"path": str(backup_path)})
+
+        # A backup is a full copy of the same (unencrypted-at-rest)
+        # InteractionRecord data _restrict_file_permissions() already
+        # restricts for the live database file; match that here rather than
+        # leaving it at the process umask default.
+        os.chmod(backup_path, 0o600)
+
+        logger.info("pre-migration backup written to %s", backup_path)
 
     def _serialize_record(self, record: InteractionRecord) -> str:
         return record.model_dump_json()

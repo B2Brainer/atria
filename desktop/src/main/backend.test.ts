@@ -36,6 +36,21 @@ describe("BackendClient", () => {
     await expect(client.start()).resolves.toBeUndefined();
   });
 
+  it("passes extraEnv through to the spawned process, merged with its own env", async () => {
+    const logs: string[] = [];
+    client = new BackendClient(
+      "node",
+      [fixturePath],
+      process.cwd(),
+      (line) => logs.push(line),
+      undefined,
+      { ATRIA_TEST_EXTRA_ENV: "packaged-override" },
+    );
+    await client.start();
+
+    expect(logs).toContain("extra-env:packaged-override");
+  });
+
   it("correlates a request to its response by id", async () => {
     client = new BackendClient("node", [fixturePath], process.cwd());
     await client.start();
