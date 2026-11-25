@@ -78,7 +78,8 @@ def test_a_non_object_message_is_never_logged_verbatim(caplog):
         dispatcher.dispatch(secret_shaped)
 
     assert secret_shaped not in caplog.text
-    assert "str" in caplog.text
+    assert len(caplog.records) == 1
+    assert caplog.records[0].args == (type(secret_shaped).__name__,)
 
 
 def test_credential_methods_are_exactly_the_three_credential_operations():
@@ -89,26 +90,32 @@ def test_credential_methods_are_exactly_the_three_credential_operations():
     assert _CREDENTIAL_METHODS <= set(OPERATIONS)
 
 
-def test_credential_operation_exceptions_are_redacted_not_passed_through():
+def test_credential_operation_exceptions_are_redacted_not_passed_through(caplog):
     # Any failure from set_credential/get_credential_status/remove_credential
     # returns a fixed, generic message — never str(exc) — since a future
     # CredentialPort implementation's exception text is not something this
-    # dispatcher can guarantee is secret-free.
+    # dispatcher can guarantee is secret-free. This must hold for the log
+    # line too, not just the RPC response: rpc.py redacts both.
+    secret = "test-should-never-appear"
+
     def leaky_set_credential(provider_id: str, secret: str) -> None:
         raise RuntimeError(f"failed storing {secret!r} for {provider_id!r}")
 
     dispatcher = RpcDispatcher({"set_credential": leaky_set_credential})
 
-    response = dispatcher.dispatch(
-        {
-            "id": 1,
-            "method": "set_credential",
-            "params": {"provider_id": "openai", "secret": "test-should-never-appear"},
-        }
-    )
+    with caplog.at_level("WARNING"):
+        response = dispatcher.dispatch(
+            {
+                "id": 1,
+                "method": "set_credential",
+                "params": {"provider_id": "openai", "secret": secret},
+            }
+        )
 
-    assert "test-should-never-appear" not in json.dumps(response)
+    assert secret not in json.dumps(response)
     assert response["error"]["message"] == "credential operation failed"
+    assert secret not in caplog.text
+    assert "failed storing" not in caplog.text  # the leaky exception's own message
 
 
 def test_every_output_line_is_well_formed_json_only_protocol_messages():
@@ -123,5 +130,8 @@ def test_every_output_line_is_well_formed_json_only_protocol_messages():
 
     serve(dispatcher, in_stream, out_stream)
 
-    for line in out_stream.getvalue().strip().splitlines():
-        json.loads(line)  # raises if any line is not well-formed JSON
+    for line in out_stream.getvalue().splitlines():
+        if not line:
+            continue
+        parsed = json.loads(line)  # raises if any line is not well-formed JSON
+        assert isinstance(parsed, dict)  # a JSON-RPC message, not a bare scalar/array
