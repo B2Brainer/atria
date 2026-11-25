@@ -1,10 +1,30 @@
 // Acceptance criteria 7: metrics-present vs. metrics-None rendering.
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { atria } from "../api";
 import ChatWorkspace from "./ChatWorkspace";
 
+vi.mock("../api", () => ({
+  atria: { listByCycle: vi.fn() },
+}));
+
+afterEach(() => {
+  vi.clearAllMocks();
+});
+
 const noop = () => {};
+
+function recordAt(cycleId: string, isoDate: string) {
+  return {
+    id: `rec-${cycleId}`,
+    cycle_id: cycleId,
+    sequence: 1,
+    request: { input: `message for ${cycleId}`, provider_id: "openai", model_id: "gpt-4o-mini", parameters: {} },
+    result: null,
+    created_at: isoDate,
+  };
+}
 
 describe("ChatWorkspace", () => {
   it("displays metrics when result.metrics is present", () => {
@@ -85,5 +105,31 @@ describe("ChatWorkspace", () => {
     fireEvent.keyDown(textarea, { key: "Enter" });
 
     expect(onSubmit).toHaveBeenCalledWith("hello", "openai", "gpt-4o-mini");
+  });
+
+  it("groups a cycle older than 7 days under 'Older', not 'Previous 7 Days'", async () => {
+    const tenDaysAgo = new Date(Date.now() - 10 * 86_400_000).toISOString();
+    const threeDaysAgo = new Date(Date.now() - 3 * 86_400_000).toISOString();
+    vi.mocked(atria.listByCycle).mockImplementation(async (cycleId: string) =>
+      cycleId === "old-cycle"
+        ? [recordAt("old-cycle", tenDaysAgo)]
+        : [recordAt("recent-cycle", threeDaysAgo)],
+    );
+
+    render(
+      <ChatWorkspace
+        cycles={["old-cycle", "recent-cycle"]}
+        activeCycleId="recent-cycle"
+        records={[]}
+        onNewInteraction={noop}
+        onSelectCycle={noop}
+        onOpenSettings={noop}
+        onSubmit={async () => {}}
+        onViewDetails={noop}
+      />,
+    );
+
+    expect(await screen.findByText("OLDER")).toBeInTheDocument();
+    expect(screen.getByText("PREVIOUS 7 DAYS")).toBeInTheDocument();
   });
 });

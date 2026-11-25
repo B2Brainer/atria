@@ -20,13 +20,18 @@ interface HistoryEntry {
   mostRecentAt: Date;
 }
 
-function groupLabel(date: Date): "Today" | "Yesterday" | "Previous 7 Days" {
+type HistoryGroup = "Today" | "Yesterday" | "Previous 7 Days" | "Older";
+
+function groupLabel(date: Date): HistoryGroup {
   const now = new Date();
   const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   const diffDays = Math.round((startOfDay(now) - startOfDay(date)) / 86_400_000);
   if (diffDays <= 0) return "Today";
   if (diffDays === 1) return "Yesterday";
-  return "Previous 7 Days";
+  if (diffDays <= 7) return "Previous 7 Days";
+  // A cycle older than 7 days was previously mislabeled "Previous 7 Days" —
+  // every entry older than yesterday landed there regardless of actual age.
+  return "Older";
 }
 
 export default function ChatWorkspace({
@@ -70,7 +75,12 @@ export default function ChatWorkspace({
     // only needs to fill in entries missing from it, not re-run when it changes.
   }, [cycles]);
 
-  const grouped: Record<string, HistoryEntry[]> = { Today: [], Yesterday: [], "Previous 7 Days": [] };
+  const grouped: Record<HistoryGroup, HistoryEntry[]> = {
+    Today: [],
+    Yesterday: [],
+    "Previous 7 Days": [],
+    Older: [],
+  };
   for (const cycleId of cycles) {
     const entry = history[cycleId];
     if (!entry) continue;
@@ -93,7 +103,7 @@ export default function ChatWorkspace({
         <button className="new-interaction-button" onClick={onNewInteraction} type="button">
           + New interaction
         </button>
-        {(["Today", "Yesterday", "Previous 7 Days"] as const).map((label) =>
+        {(["Today", "Yesterday", "Previous 7 Days", "Older"] as const).map((label) =>
           grouped[label].length > 0 ? (
             <div key={label}>
               <div className="history-group-label">{label.toUpperCase()}</div>
