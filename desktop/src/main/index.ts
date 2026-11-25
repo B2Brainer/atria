@@ -6,6 +6,17 @@ import { BackendClient } from "./backend";
 import { registerIpcHandlers } from "./ipc";
 import { installCrashCapture, Logger } from "./logger";
 
+// Electron's own app.getName() (used by app.getPath("userData")/"logs")
+// defaults to package.json's "name" field ("atria-desktop") -- it does NOT
+// read electron-builder.yml's `productName: Atria`, which only controls the
+// packaged .app bundle's own name/Info.plist. Without this, the packaged
+// app's userData/logs directories would be named "atria-desktop" while
+// every operator-facing reference (the .app itself, documentation, this
+// repo's own tooling) says "Atria" -- confirmed by running the packaged
+// build: the real log path was ~/Library/Logs/atria-desktop/, not
+// ~/Library/Logs/Atria/. Must be set before any app.getPath() call below.
+app.setName("Atria");
+
 // A distinct override name from the Python backend's own `ATRIA_LOG_PATH`
 // (api/config.py): the backend subprocess inherits this process's env plus
 // whatever override startBackend() computes for it below, so reusing the
