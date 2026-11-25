@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, dialog } from "electron";
 
 import { BackendClient } from "./backend";
 import { registerIpcHandlers } from "./ipc";
@@ -44,7 +44,19 @@ async function startBackend(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
-  await startBackend();
+  try {
+    await startBackend();
+  } catch (err) {
+    // Without this catch, a failed startBackend() (spawn failure, readiness
+    // timeout) is an unhandled promise rejection: no window ever opens, the
+    // user sees nothing, and the process is left in an ambiguous state.
+    dialog.showErrorBox(
+      "Atria failed to start",
+      `The application backend could not be started: ${(err as Error).message}`,
+    );
+    app.exit(1);
+    return;
+  }
   createWindow();
 
   app.on("activate", () => {

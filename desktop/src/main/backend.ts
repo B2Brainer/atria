@@ -42,7 +42,19 @@ export class BackendClient {
 
   async start(): Promise<void> {
     this.ready = this.spawnAndWaitReady();
+    this.preventUnhandledRejection(this.ready);
     await this.ready;
+  }
+
+  // A readiness failure with no in-flight call() awaiting it yet (notably,
+  // a restart triggered by handleExit() with nobody currently calling the
+  // backend) would otherwise be an unhandled promise rejection — Node
+  // terminates the process on one by default. This attaches a side
+  // observer that swallows it for Node's bookkeeping only; `this.ready`
+  // itself is untouched, so a later `await this.ready` (in call() or a
+  // fresh start()) still sees and re-throws the real rejection.
+  private preventUnhandledRejection(promise: Promise<void>): void {
+    promise.catch(() => {});
   }
 
   private spawnAndWaitReady(): Promise<void> {
@@ -82,6 +94,16 @@ export class BackendClient {
       this.handleExit();
     });
 
+    // Without this listener, a failed spawn (the command not found, a bad
+    // ATRIA_PYTHON override) or a write to a child that already exited
+    // (EPIPE) emits an uncaught 'error' event on the ChildProcess, which
+    // crashes the whole Electron main process rather than surfacing as a
+    // normal BackendUnavailableError. 'exit' still fires after 'error' for a
+    // failed spawn, so handleExit()'s rejection/restart logic still runs.
+    child.on("error", (err) => {
+      this.onLog(`backend process error: ${err.message}`);
+    });
+
     return readyPromise;
   }
 
@@ -113,6 +135,7 @@ export class BackendClient {
     this.restartCount += 1;
     this.onLog(`restarting backend (attempt ${this.restartCount}/${MAX_RESTART_ATTEMPTS})`);
     this.ready = this.spawnAndWaitReady();
+    this.preventUnhandledRejection(this.ready);
   }
 
   async call<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {

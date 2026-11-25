@@ -74,6 +74,46 @@ describe("BackendClient", () => {
     await expect(client.call("echo", { value: "x" })).rejects.toThrow(BackendUnavailableError);
   });
 
+  it("a readiness failure never surfaces as an unhandled promise rejection", async () => {
+    // Regression: a restart's spawnAndWaitReady() rejection, with no
+    // in-flight call() awaiting it, must not be an unhandled rejection —
+    // Node terminates the process on one by default.
+    const unhandled: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandledRejection);
+
+    try {
+      client = new BackendClient("node", [fixturePath], process.cwd());
+      await client.start();
+
+      // Crash without a pending call racing it, so nothing awaits this
+      // restart's readiness promise until the test's own assertion below.
+      await client.call("crash").catch(() => undefined);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+    }
+
+    expect(unhandled).toEqual([]);
+  });
+
+  it("a failed spawn's 'error' event does not crash the process", async () => {
+    // Regression: before the child.on("error", ...) listener was added, an
+    // ENOENT spawn (a bad command) emitted an uncaught 'error' event on the
+    // ChildProcess with no listener, which Node re-throws, crashing the
+    // whole process. This only asserts the event is observed, not the full
+    // (slower, READY_TIMEOUT_MS-bounded) start() rejection.
+    const logs: string[] = [];
+    client = new BackendClient("this-command-does-not-exist", [], process.cwd(), (line) =>
+      logs.push(line),
+    );
+    void client.start().catch(() => undefined);
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    expect(logs.some((line) => line.includes("backend process error"))).toBe(true);
+  });
+
   it("stop() terminates the child process and leaves no orphan", async () => {
     client = new BackendClient("node", [fixturePath], process.cwd());
     await client.start();
