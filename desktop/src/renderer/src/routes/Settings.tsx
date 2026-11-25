@@ -9,12 +9,19 @@ export default function Settings({ onBackToChat }: { onBackToChat(): void }) {
   const [statuses, setStatuses] = useState<Record<string, CredentialStatus>>({});
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState<Record<string, boolean>>({});
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = async () => {
-    const entries = await Promise.all(
-      PROVIDERS.map(async (providerId) => [providerId, await atria.getCredentialStatus(providerId)] as const),
-    );
-    setStatuses(Object.fromEntries(entries));
+    try {
+      const entries = await Promise.all(
+        PROVIDERS.map(
+          async (providerId) => [providerId, await atria.getCredentialStatus(providerId)] as const,
+        ),
+      );
+      setStatuses(Object.fromEntries(entries));
+    } catch (err) {
+      setError((err as Error).message);
+    }
   };
 
   useEffect(() => {
@@ -24,15 +31,25 @@ export default function Settings({ onBackToChat }: { onBackToChat(): void }) {
   const handleSave = async (providerId: string) => {
     const secret = drafts[providerId];
     if (!secret) return;
-    await atria.setCredential(providerId, secret);
-    setDrafts((prev) => ({ ...prev, [providerId]: "" }));
-    setEditing((prev) => ({ ...prev, [providerId]: false }));
-    await refresh();
+    try {
+      setError(null);
+      await atria.setCredential(providerId, secret);
+      setDrafts((prev) => ({ ...prev, [providerId]: "" }));
+      setEditing((prev) => ({ ...prev, [providerId]: false }));
+      await refresh();
+    } catch (err) {
+      setError((err as Error).message);
+    }
   };
 
   const handleRemove = async (providerId: string) => {
-    await atria.removeCredential(providerId);
-    await refresh();
+    try {
+      setError(null);
+      await atria.removeCredential(providerId);
+      await refresh();
+    } catch (err) {
+      setError((err as Error).message);
+    }
   };
 
   return (
@@ -45,6 +62,7 @@ export default function Settings({ onBackToChat }: { onBackToChat(): void }) {
         <div>Preferences</div>
       </nav>
       <div className="settings-content">
+        {error && <div className="error-banner">{error}</div>}
         <p>API keys are stored in the macOS Keychain and never written to the interaction record.</p>
         {PROVIDERS.map((providerId) => {
           const status = statuses[providerId];
@@ -76,6 +94,7 @@ export default function Settings({ onBackToChat }: { onBackToChat(): void }) {
               ) : (
                 <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
                   <input
+                    type="password"
                     placeholder="Paste API key"
                     value={drafts[providerId] ?? ""}
                     onChange={(event) =>

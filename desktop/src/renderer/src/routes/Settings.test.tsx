@@ -89,6 +89,38 @@ describe("Settings", () => {
     expect(atria.removeCredential).not.toHaveBeenCalled();
   });
 
+  it("a failed setCredential call surfaces an error banner instead of an unhandled rejection", async () => {
+    vi.mocked(atria.getCredentialStatus).mockResolvedValue({
+      configured: false,
+      status: "not_configured",
+      masked_preview: null,
+    });
+    vi.mocked(atria.setCredential).mockRejectedValue(new Error("credential operation failed"));
+
+    render(<Settings onBackToChat={() => {}} />);
+    await screen.findAllByText("Not configured");
+
+    const [input] = screen.getAllByPlaceholderText("Paste API key");
+    fireEvent.change(input, { target: { value: "test-secret" } });
+    const [saveButton] = screen.getAllByText("Save key");
+    fireEvent.click(saveButton);
+
+    expect(await screen.findByText("credential operation failed")).toBeInTheDocument();
+  });
+
+  it("the API key input is masked (type=password), not plain text", async () => {
+    vi.mocked(atria.getCredentialStatus).mockResolvedValue({
+      configured: false,
+      status: "not_configured",
+      masked_preview: null,
+    });
+
+    render(<Settings onBackToChat={() => {}} />);
+    const [input] = await screen.findAllByPlaceholderText("Paste API key");
+
+    expect(input).toHaveAttribute("type", "password");
+  });
+
   it("removing a credential calls removeCredential", async () => {
     vi.mocked(atria.getCredentialStatus).mockResolvedValue({
       configured: true,
