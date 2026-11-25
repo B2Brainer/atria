@@ -105,7 +105,11 @@ export class BackendClient {
         try {
           message = JSON.parse(line) as RpcMessage;
         } catch {
-          this.onLog(`malformed backend stdout line: ${line}`);
+          // Never log the line's own content: a malformed stdout line from
+          // the backend could itself be secret-shaped (the same reasoning
+          // api/rpc.py's non-object-message handling applies on its side
+          // of this same channel) — only its length is safe to report.
+          this.onLog(`malformed backend stdout line (${line.length} chars, not valid JSON)`);
           return;
         }
         if (settleReady && message.event === "ready") {

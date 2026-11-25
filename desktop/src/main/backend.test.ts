@@ -2,6 +2,8 @@
 // 3: JSON-RPC correlation. Exercised against a fake fixture process (see
 // __fixtures__/fake-backend.cjs) rather than a real Python backend, so these
 // stay fast and deterministic.
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,6 +14,10 @@ import { BackendClient, BackendUnavailableError } from "./backend";
 const fixturesDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "__fixtures__");
 const fixturePath = path.join(fixturesDir, "fake-backend.cjs");
 const neverReadyFixturePath = path.join(fixturesDir, "never-ready-backend.cjs");
+const crashThenNeverReadyFixturePath = path.join(
+  fixturesDir,
+  "crash-then-never-ready-backend.cjs",
+);
 
 let client: BackendClient | null = null;
 
@@ -73,12 +79,39 @@ describe("BackendClient", () => {
     await expect(client.call("echo", { value: "x" })).rejects.toThrow(BackendUnavailableError);
   });
 
-  it("a readiness failure never surfaces as an unhandled promise rejection", async () => {
-    // Regression: a readiness rejection (here, a genuine timeout — the
-    // fixture never emits "ready") with no in-flight call() awaiting it
-    // must not be an unhandled rejection — Node terminates the process on
-    // one by default. A short readyTimeoutMs keeps this fast instead of
-    // waiting the real 10s default.
+  it("start()'s own initial readiness rejection never surfaces as an unhandled promise rejection", async () => {
+    // start() itself always awaits this.ready right after assigning it, so
+    // this mainly documents that the first attempt is safe by construction
+    // — the scenario with no safety net at all is the restart path,
+    // covered by the next test.
+    const unhandled: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandledRejection);
+
+    try {
+      client = new BackendClient("node", [neverReadyFixturePath], process.cwd(), () => {}, 50);
+      await expect(client.start()).rejects.toThrow(BackendUnavailableError);
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+    }
+
+    expect(unhandled).toEqual([]);
+  });
+
+  it("a restart attempt's readiness rejection never surfaces as an unhandled promise rejection", async () => {
+    // Regression: the one scenario start()'s own `await this.ready` does
+    // NOT cover — a crash-triggered restart (onProcessFailure's
+    // `this.ready = this.spawnAndWaitReady()`) whose new attempt never
+    // becomes ready, with no in-flight call() or anything else awaiting
+    // that specific promise. A fixture that behaves normally on its first
+    // spawn but never emits "ready" on its second (tracked via a marker
+    // file, since env is inherited into the child) reaches this exact
+    // path: succeed -> crash -> restart -> restart's readiness hangs.
+    const markerDir = mkdtempSync(path.join(tmpdir(), "atria-restart-marker-"));
+    const markerPath = path.join(markerDir, "spawned");
+    const previousMarker = process.env.ATRIA_TEST_RESTART_MARKER;
+    process.env.ATRIA_TEST_RESTART_MARKER = markerPath;
+
     const unhandled: unknown[] = [];
     const onUnhandledRejection = (reason: unknown) => unhandled.push(reason);
     process.on("unhandledRejection", onUnhandledRejection);
@@ -86,17 +119,22 @@ describe("BackendClient", () => {
     try {
       client = new BackendClient(
         "node",
-        [neverReadyFixturePath],
+        [crashThenNeverReadyFixturePath],
         process.cwd(),
         () => {},
-        50,
+        100,
       );
-      // Deliberately not awaited: this is exactly the "nothing is awaiting
-      // this readiness promise yet" scenario the fix protects against.
-      void client.start().catch(() => undefined);
+      await client.start();
+
+      // Crash with no pending call racing it, so nothing awaits the
+      // restart's readiness promise until this test's own assertion below.
+      await client.call("crash").catch(() => undefined);
       await new Promise((resolve) => setTimeout(resolve, 200));
     } finally {
       process.off("unhandledRejection", onUnhandledRejection);
+      if (previousMarker === undefined) delete process.env.ATRIA_TEST_RESTART_MARKER;
+      else process.env.ATRIA_TEST_RESTART_MARKER = previousMarker;
+      rmSync(markerDir, { recursive: true, force: true });
     }
 
     expect(unhandled).toEqual([]);
