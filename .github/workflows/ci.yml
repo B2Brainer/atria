@@ -21,6 +21,7 @@ jobs:
       - run: uv sync --locked
       - run: uv run pytest -q
       - run: uv run ruff check .
+      - run: python3 scripts/check-agent-frontmatter.py
 
   desktop:
     name: Desktop (Node 24 LTS)
@@ -40,3 +41,79 @@ jobs:
       - run: npm ci
       - run: npm run test
       - run: npm run lint
+
+  # Packaged-artifact smoke test (Increment 6 AC1/AC3): the two jobs above
+  # only ever exercise source code on ubuntu-latest — electron-builder's
+  # `--mac` target, and the packaged resourcesPath/symlink resolution it
+  # depends on, cannot be produced or launched there. That gap is why four
+  # separate commits (bd3286c, 1085543, 09e940f, 3c9b2a4) were needed to
+  # reactively fix packaged-path bugs after merge instead of catching them
+  # in one CI run. This job builds the real unsigned macOS artifact and
+  # launches it, verifying the bundled Python backend actually starts from
+  # its packaged location.
+  desktop-package-smoke:
+    name: Desktop package smoke test (macOS)
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: desktop
+    env:
+      # Forces the unsigned/development fallback path (AC3) — no Apple
+      # Developer credentials are available or required here.
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
+        with:
+          python-version: "3.13"
+      - run: npm ci
+      - run: npm run build
+      - run: npm run package:prepare-python
+      # --dir skips dmg/zip compression (unneeded for a smoke test) but
+      # still produces a real, packaged .app with extraResources placed
+      # exactly as electron-builder places them in a release build.
+      - run: npx electron-builder --mac --dir --config electron-builder.yml
+      - name: Launch the packaged app and verify the backend reaches readiness
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find dist -maxdepth 2 -iname '*.app' -print -quit)"
+          if [ -z "$APP_PATH" ]; then
+            echo "error: no .app bundle found under desktop/dist" >&2
+            exit 1
+          fi
+          echo "==> launching $APP_PATH"
+          BACKEND_LOG="$HOME/Library/Application Support/Atria/logs/atria-backend.log"
+          MAIN_LOG="$HOME/Library/Logs/Atria/atria-main.log"
+          rm -f "$BACKEND_LOG" "$MAIN_LOG"
+          "$APP_PATH/Contents/MacOS/Atria" >/tmp/atria-stdout.log 2>&1 &
+          APP_PID=$!
+          READY=false
+          for _ in $(seq 1 30); do
+            if [ -s "$BACKEND_LOG" ]; then
+              READY=true
+              break
+            fi
+            if ! kill -0 "$APP_PID" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          kill "$APP_PID" 2>/dev/null || true
+          wait "$APP_PID" 2>/dev/null || true
+          echo "===== main process log ====="
+          cat "$MAIN_LOG" 2>/dev/null || echo "(no main log produced)"
+          echo "===== backend log ====="
+          cat "$BACKEND_LOG" 2>/dev/null || echo "(no backend log produced)"
+          echo "===== captured stdout/stderr ====="
+          cat /tmp/atria-stdout.log || true
+          if [ "$READY" != true ]; then
+            echo "error: packaged backend never produced a log record — it did not reach readiness (packaged resourcesPath/python-dist resolution likely broken)" >&2
+            exit 1
+          fi
