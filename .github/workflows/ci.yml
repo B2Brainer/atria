@@ -97,21 +97,27 @@ jobs:
           rm -f "$BACKEND_LOG" "$MAIN_LOG"
           "$APP_PATH/Contents/MacOS/Atria" >/tmp/atria-stdout.log 2>&1 &
           APP_PID=$!
-          # A non-empty backend log alone is not a readiness signal: the
-          # backend's own JSON log file is also where a startup error is
-          # recorded (api/logging_config.py), and a crashed process exits
-          # the moment index.ts's startBackend() catch calls app.exit(1)
-          # (desktop/src/main/index.ts). Readiness is the log appearing
-          # WHILE the app process is still alive — a log that only appears
-          # after the process has already exited is a captured failure,
-          # not a success.
+          # A non-empty backend log is not, by itself, a readiness signal:
+          # the same JSON log file is also where a startup error is
+          # recorded (api/logging_config.py's JsonLinesFormatter writes
+          # every record, error or not, to this one file), and a process
+          # that logged an error can still be alive for a moment before
+          # index.ts's startBackend() catch calls app.exit(1). Readiness
+          # requires ALL of: the log is non-empty, the log contains no
+          # ERROR/CRITICAL/Traceback record, AND the process is still
+          # alive a full poll interval later (not just at the instant the
+          # log appeared) — closing the race where an error-then-exit
+          # sequence is sampled mid-way and misread as success.
           READY=false
           for _ in $(seq 1 30); do
             if ! kill -0 "$APP_PID" 2>/dev/null; then
               break
             fi
-            if [ -s "$BACKEND_LOG" ]; then
-              READY=true
+            if [ -s "$BACKEND_LOG" ] && ! grep -qE "ERROR|CRITICAL|Traceback" "$BACKEND_LOG" "$MAIN_LOG" 2>/dev/null; then
+              sleep 2
+              if kill -0 "$APP_PID" 2>/dev/null && ! grep -qE "ERROR|CRITICAL|Traceback" "$BACKEND_LOG" "$MAIN_LOG" 2>/dev/null; then
+                READY=true
+              fi
               break
             fi
             sleep 1
