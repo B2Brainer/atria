@@ -112,11 +112,19 @@ jobs:
           # every record, error or not, to this one file).
           READY=false
           for _ in $(seq 1 30); do
-            if ! kill -0 "$APP_PID" 2>/dev/null; then
+            # Check the log BEFORE the liveness probe: the file write
+            # completes before the process can exit, so a process that
+            # crashes in the same instant the line was written must still
+            # be credited with having reached it (it is the stability
+            # recheck below, not this probe, that then catches that case).
+            if grep -q "backend reached readiness" "$MAIN_LOG" 2>/dev/null; then
+              sleep 2
+              if kill -0 "$APP_PID" 2>/dev/null; then
+                READY=true
+              fi
               break
             fi
-            if grep -q "backend reached readiness" "$MAIN_LOG" 2>/dev/null; then
-              READY=true
+            if ! kill -0 "$APP_PID" 2>/dev/null; then
               break
             fi
             sleep 1
