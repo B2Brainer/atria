@@ -143,11 +143,17 @@ export class BackendClient {
       failureHandled = true;
       settleReady?.(error);
       this.rejectAllPending(error);
+
+      if (this.shuttingDown) {
+        // stop() already owns an orderly SIGTERM-then-timeout-then-SIGKILL
+        // teardown of this exact child; escalating straight to SIGKILL
+        // here (e.g. on a stdin error racing stop()'s own SIGTERM) would
+        // cut that short instead of letting it finish gracefully.
+        return;
+      }
       if (child.exitCode === null && child.signalCode === null) {
         this.tryKill(child, "SIGKILL");
       }
-
-      if (this.shuttingDown) return;
       if (!this.everReady) {
         // The very first attempt never reached readiness: start() is
         // still awaiting exactly this promise, and already receives

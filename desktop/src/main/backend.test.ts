@@ -123,14 +123,18 @@ describe("BackendClient", () => {
         [crashThenNeverReadyFixturePath],
         process.cwd(),
         (line) => logs.push(line),
-        100,
+        // Generous enough that the FIRST attempt's genuine "ready" (a real
+        // spawned subprocess under potential runner load) reliably lands
+        // within it, while still short enough that the wait below can
+        // comfortably outlast at least one additional (restart) timeout.
+        150,
       );
       await client.start();
 
       // Crash with no pending call racing it, so nothing awaits the
       // restart's readiness promise until this test's own assertion below.
       await client.call("crash").catch(() => undefined);
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await new Promise((resolve) => setTimeout(resolve, 600));
     } finally {
       process.off("unhandledRejection", onUnhandledRejection);
       if (previousMarker === undefined) delete process.env.ATRIA_TEST_RESTART_MARKER;
