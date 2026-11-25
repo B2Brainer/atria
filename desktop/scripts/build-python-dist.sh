@@ -16,7 +16,12 @@
 # bundle's `Contents/Resources`.
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# `pwd -P` (not plain `pwd`): resolves any symlink component in this
+# script's own invocation path, so REPO_ROOT (and every destructive `rm -rf`
+# target derived from it below) is always this script's real location on
+# disk, never a logical, not-yet-resolved path through a symlinked
+# directory or a symlinked invocation of this script itself.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 RESOURCES_DIR="$REPO_ROOT/desktop/resources"
 PYTHON_DIST_DIR="$RESOURCES_DIR/python-dist"
 BACKEND_DIR="$RESOURCES_DIR/backend"
@@ -34,7 +39,12 @@ uv python install "$PYTHON_VERSION" --install-dir "$PYTHON_DIST_DIR"
 # not relocatable. Resolve the symlink once, here, and keep only the real
 # directory's contents directly under python-dist/, so nothing under this
 # directory depends on an absolute path baked in at this build step.
-RUNTIME_DIR="$(find "$PYTHON_DIST_DIR" -maxdepth 1 -type d -name 'cpython-*' | head -n1)"
+# `-print -quit` (not `| head -n1`): under `pipefail`, `head` closing the
+# pipe after its first line sends `find` a SIGPIPE, which `pipefail` would
+# report as this command's (non-zero) exit status even though `head` itself
+# succeeded -- `-quit` makes `find` itself stop after the first match, with
+# no pipe for it to be killed by.
+RUNTIME_DIR="$(find "$PYTHON_DIST_DIR" -maxdepth 1 -type d -name 'cpython-*' -print -quit)"
 if [ -z "$RUNTIME_DIR" ]; then
   echo "error: could not locate the installed CPython runtime directory" >&2
   exit 1
@@ -65,9 +75,14 @@ for pkg in core adapters api; do
 done
 
 echo "==> Verifying the bundled runtime imports the bundled backend source"
-"$PYTHON_EXE" -c "
+# BACKEND_DIR reaches the interpreter via its environment, not by string-
+# interpolating a shell variable into inline Python source (which would
+# break, or worse, inject code, were this path ever to contain a quote or
+# backslash).
+ATRIA_BACKEND_DIR="$BACKEND_DIR" "$PYTHON_EXE" -c "
+import os
 import sys
-sys.path.insert(0, '$BACKEND_DIR')
+sys.path.insert(0, os.environ['ATRIA_BACKEND_DIR'])
 from adapters.credentials.adapter import CredentialAdapter
 from adapters.persistence.adapter import PersistenceAdapter
 from api.composition import Composition
