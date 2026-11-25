@@ -74,11 +74,11 @@ def test_credential_operation_exceptions_are_redacted_not_passed_through():
         {
             "id": 1,
             "method": "set_credential",
-            "params": {"provider_id": "openai", "secret": "sk-should-never-appear"},
+            "params": {"provider_id": "openai", "secret": "test-should-never-appear"},
         }
     )
 
-    assert "sk-should-never-appear" not in json.dumps(response)
+    assert "test-should-never-appear" not in json.dumps(response)
     assert response["error"]["message"] == "credential operation failed"
 
 
