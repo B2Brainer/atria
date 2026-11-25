@@ -32,6 +32,15 @@ export class BackendClient {
   private restartCount = 0;
   private shuttingDown = false;
   private ready: Promise<void> = Promise.resolve();
+  // Only a failure AFTER the backend has reached readiness at least once
+  // triggers an automatic restart. A failure during the very first attempt
+  // (start() is still awaiting `this.ready`) must not: start() awaits one
+  // specific promise instance, and reassigning `this.ready` to a new
+  // restart attempt behind its back would leave start() rejecting with
+  // the ORIGINAL error while a replacement backend silently spins up
+  // un-awaited by anyone. The first attempt's failure is reported to
+  // start()'s caller instead, who decides whether to retry.
+  private everReady = false;
 
   constructor(
     private readonly command: string,
@@ -86,7 +95,7 @@ export class BackendClient {
 
     const readyPromise = new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
-        settleReady?.(new BackendUnavailableError("backend did not report readiness in time"));
+        onProcessFailure(new BackendUnavailableError("backend did not report readiness in time"));
       }, this.readyTimeoutMs);
 
       settleReady = (error) => {
@@ -113,6 +122,7 @@ export class BackendClient {
           return;
         }
         if (settleReady && message.event === "ready") {
+          this.everReady = true;
           settleReady(null);
           return;
         }
@@ -120,18 +130,32 @@ export class BackendClient {
       });
     });
 
-    // The one place that both settles this attempt's readiness and runs
-    // the bounded restart/give-up decision — invoked by 'exit', by a
-    // spawn/stdio 'error', and by the readiness timeout alike, so the
-    // restart counter is never bypassed or double-counted regardless of
-    // which of those fires (or how many do) for one failed attempt.
+    // The one place that settles this attempt's readiness, tears down a
+    // still-alive child (a readiness timeout or a stdin failure doesn't
+    // necessarily mean the process itself exited — without this it would
+    // become an orphan once we move on), and runs the bounded restart/
+    // give-up decision. Invoked by 'exit', a spawn/stdio 'error', the
+    // readiness timeout, and a stdin 'error' alike, so none of them can
+    // bypass the restart counter, and `failureHandled` ensures it runs
+    // exactly once per attempt regardless of how many of them fire.
     const onProcessFailure = (error: Error): void => {
       if (child !== this.process || failureHandled) return;
       failureHandled = true;
       settleReady?.(error);
       this.rejectAllPending(error);
+      if (child.exitCode === null && child.signalCode === null) {
+        this.tryKill(child, "SIGKILL");
+      }
 
       if (this.shuttingDown) return;
+      if (!this.everReady) {
+        // The very first attempt never reached readiness: start() is
+        // still awaiting exactly this promise, and already receives
+        // `error` via settleReady above. Restarting behind its back here
+        // would spin up a second, un-awaited backend racing start()'s own
+        // rejection — instead, the caller decides whether to retry.
+        return;
+      }
       if (this.restartCount >= MAX_RESTART_ATTEMPTS) {
         this.onLog(`backend exceeded ${MAX_RESTART_ATTEMPTS} restart attempts; giving up`);
         return;
@@ -168,15 +192,16 @@ export class BackendClient {
     // child.on("error") does NOT receive errors from the stdin stream
     // itself (e.g. EPIPE writing to an already-exited process) — those are
     // a separate EventEmitter with their own 'error' event, uncaught by
-    // default. A write failure can't be attributed to one specific pending
-    // call, so every call currently awaiting a response against THIS
-    // child is rejected; the `child !== this.process` guard stops a late
-    // error from a torn-down previous child from reaching calls already
-    // pending against a freshly restarted one.
+    // default. Routed through onProcessFailure (not just a pending-call
+    // rejection) because a stdin failure on an otherwise-still-alive child
+    // leaves it unresponsive forever if nothing restarts/gives up on it;
+    // the `child !== this.process` guard stops a late error from a
+    // torn-down previous child from reaching calls already pending against
+    // a freshly restarted one.
     child.stdin.on("error", (err) => {
       if (child !== this.process) return;
       this.onLog(`backend stdin error: ${err.message}`);
-      this.rejectAllPending(new BackendUnavailableError(`backend stdin error: ${err.message}`));
+      onProcessFailure(new BackendUnavailableError(`backend stdin error: ${err.message}`));
     });
 
     return readyPromise;

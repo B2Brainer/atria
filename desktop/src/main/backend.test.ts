@@ -115,13 +115,14 @@ describe("BackendClient", () => {
     const unhandled: unknown[] = [];
     const onUnhandledRejection = (reason: unknown) => unhandled.push(reason);
     process.on("unhandledRejection", onUnhandledRejection);
+    const logs: string[] = [];
 
     try {
       client = new BackendClient(
         "node",
         [crashThenNeverReadyFixturePath],
         process.cwd(),
-        () => {},
+        (line) => logs.push(line),
         100,
       );
       await client.start();
@@ -138,6 +139,28 @@ describe("BackendClient", () => {
     }
 
     expect(unhandled).toEqual([]);
+    // The restart's own readiness timeout must route through
+    // onProcessFailure (killing the hung child and applying the bounded
+    // restart policy) rather than only rejecting the readiness promise —
+    // confirmed by at least one further restart attempt being logged
+    // (the crash-triggered restart, plus the timeout-triggered one(s) that
+    // follow it within the 200ms window, exact count timing-sensitive).
+    expect(logs.filter((line) => line.includes("restarting backend")).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("a failure during the very first attempt does not trigger a silent background restart", async () => {
+    // Regression: restarting behind start()'s back on its very first
+    // attempt would leave a second, un-awaited backend racing start()'s
+    // own rejection. A failure before readiness has ever been reached
+    // must be reported to start()'s caller only, never auto-restarted.
+    const logs: string[] = [];
+    client = new BackendClient("node", [neverReadyFixturePath], process.cwd(), (line) =>
+      logs.push(line), 50);
+
+    await expect(client.start()).rejects.toThrow(BackendUnavailableError);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(logs.some((line) => line.includes("restarting backend"))).toBe(false);
   });
 
   it("rejects start() promptly (not after the full readiness timeout) when the spawn fails", async () => {
