@@ -69,4 +69,29 @@ describe("Logger", () => {
     process.removeAllListeners("unhandledRejection");
     exitSpy.mockRestore();
   });
+
+  it("captures an unhandled promise rejection as a log record, then terminates the process", () => {
+    const logger = new Logger(logPath);
+    // Node's own default for an unhandled rejection with no listener at all
+    // is to terminate the process (since Node 15) -- installCrashCapture's
+    // listener must not silently suppress that by logging without exiting.
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("process.exit called");
+    }) as never);
+    installCrashCapture(logger);
+
+    expect(() =>
+      process.emit("unhandledRejection", new Error("rejected"), Promise.reject().catch(() => {})),
+    ).toThrow("process.exit called");
+
+    const lines = readFileSync(logPath, "utf8").trim().split("\n");
+    const record = JSON.parse(lines[lines.length - 1]);
+    expect(record.level).toBe("ERROR");
+    expect(record.error).toBe("rejected");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+
+    process.removeAllListeners("uncaughtException");
+    process.removeAllListeners("unhandledRejection");
+    exitSpy.mockRestore();
+  });
 });

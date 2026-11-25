@@ -101,8 +101,9 @@ and pull request.
   convention rather than a technical restriction today.
 - **Local structured logging:** both the Python backend (dev default
   `logs/atria-backend.log`, repo-root-relative; packaged builds default to
-  `app.getPath("userData")/atria-backend.log` instead — either overridable
-  via `ATRIA_DB_PATH`/`ATRIA_LOG_PATH`; `api/logging_config.py`) and the
+  `app.getPath("userData")/logs/atria-backend.log` instead — overridable via
+  `ATRIA_LOG_PATH`, with its database at `ATRIA_DB_PATH`; `api/logging_config.py`)
+  and the
   Electron main process (`app.getPath("logs")/atria-main.log`, overridable
   via `ATRIA_MAIN_LOG_PATH` — a distinct name from the backend's own
   `ATRIA_LOG_PATH`, so one override cannot point both processes at the same

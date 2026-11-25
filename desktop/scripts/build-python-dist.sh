@@ -28,16 +28,20 @@ BACKEND_DIR="$RESOURCES_DIR/backend"
 PYTHON_VERSION="3.13"
 
 mkdir -p "$RESOURCES_DIR"
-# Defensive, cheap to check: if some prior state ever left python-dist/ or
-# backend/ as a symlink (never created as one by this script), resolve-then-
-# rm-rf below would follow it and delete whatever it points at, not a
-# directory under this repo.
-for path in "$PYTHON_DIST_DIR" "$BACKEND_DIR"; do
-  if [ -L "$path" ]; then
-    echo "error: $path is a symlink, refusing to remove it" >&2
+# A leaf-only symlink check (python-dist/backend themselves) is not enough:
+# an ANCESTOR component -- desktop/resources itself, or desktop/ -- being a
+# symlink would redirect every path built from it outside the repo while
+# each leaf still looks like an ordinary directory. Resolve the actual
+# directory we are about to operate in and confirm it is still really
+# inside REPO_ROOT before anything destructive runs.
+RESOLVED_RESOURCES_DIR="$(cd "$RESOURCES_DIR" && pwd -P)"
+case "$RESOLVED_RESOURCES_DIR" in
+  "$REPO_ROOT"/desktop/resources | "$REPO_ROOT"/desktop/resources/*) ;;
+  *)
+    echo "error: $RESOURCES_DIR resolves to $RESOLVED_RESOURCES_DIR, outside $REPO_ROOT/desktop/resources -- refusing to touch it" >&2
     exit 1
-  fi
-done
+    ;;
+esac
 rm -rf "$PYTHON_DIST_DIR" "$BACKEND_DIR"
 
 echo "==> Installing standalone CPython $PYTHON_VERSION into $PYTHON_DIST_DIR"

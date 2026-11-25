@@ -21,16 +21,20 @@ exports.default = async function notarizeHook(context) {
   const isSigned = Boolean(process.env.CSC_LINK);
 
   if (!isSigned || !appleId || !applePassword || !teamId) {
-    // Not "unsigned": this artifact may still be code-signed (CSC_LINK/
-    // CSC_KEY_PASSWORD) — just not notarized, which Gatekeeper still
-    // requires to install without a manual override. The release
-    // workflow's own `fully_signed` check (release.yml) is what decides
-    // the publish-time label/draft status from the complete credential
-    // set, not this log line.
+    // Not "unsigned": a CSC_LINK-signed artifact without APPLE_* is still
+    // code-signed, just not notarized, which Gatekeeper still requires to
+    // install without a manual override. The release workflow's own
+    // `fully_signed` check (release.yml) is what decides the publish-time
+    // label/draft status from the complete credential set, not this line.
+    const missing = [];
+    if (!isSigned) missing.push("CSC_LINK");
+    if (!appleId) missing.push("APPLE_ID");
+    if (!applePassword) missing.push("APPLE_APP_SPECIFIC_PASSWORD");
+    if (!teamId) missing.push("APPLE_TEAM_ID");
     console.log(
-      "[notarize] APPLE_ID/APPLE_APP_SPECIFIC_PASSWORD/APPLE_TEAM_ID not set — " +
-        "skipping notarization; this build's artifact is not notarized " +
-        "(Gatekeeper will not treat it as a trusted release artifact).",
+      `[notarize] ${missing.join("/")} not set — skipping notarization; ` +
+        "this build's artifact is not notarized (Gatekeeper will not treat " +
+        "it as a trusted release artifact).",
     );
     return;
   }
