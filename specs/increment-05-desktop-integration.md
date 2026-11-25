@@ -131,6 +131,10 @@ Implement the communication interface between the Electron desktop process and t
 - No packaging, signing, notarization, or auto-update mechanism may be introduced in this increment; `electron-builder` remains reserved for Increment 6 and is not declared as a dependency here.
 - Changes to this specification's acceptance criteria to accommodate an implementation shortfall are not permitted; deviations must be reported, not silently reconciled.
 
+### Noted implementation deviation (PR-gate review round)
+
+The implementation adds a fourth sidebar history group, "Older" (for a cycle whose most-recent activity is more than 7 days old), beyond the three the mockup/Scope name ("Today"/"Yesterday"/"Previous 7 Days"). This corrects a defect caught during the PR gate's independent review: without it, every cycle older than yesterday was mislabeled "Previous 7 Days" regardless of true age (a months-old conversation displayed under a 7-day heading). The fourth bucket is the minimal, spec-consistent fix — it introduces no new operation, field, or port, only an additional renderer-side date-bucketing label — and is noted here per `CLAUDE.md` §5's requirement to explain a deviation from established presentation, rather than silently reconciling the acceptance criteria to match it.
+
 ## Resolved Decisions
 
 The operator resolved the following on 2026-11-24.
