@@ -58,7 +58,6 @@ async function startBackend(): Promise<void> {
   let pythonCommand: string;
   let pythonArgs: string[];
   let cwd: string;
-  let backendEnv: Record<string, string> = {};
 
   if (process.env.ATRIA_PYTHON != null) {
     // Test/override hook (established in Increment 5): an explicit
@@ -73,25 +72,35 @@ async function startBackend(): Promise<void> {
   } else if (app.isPackaged) {
     // Packaged build (Increment 6): spawn the bundled, standalone Python
     // runtime against the bundled backend source — no `uv`/dev Python
-    // installation required on the target machine. Its database/log/backup
-    // locations must NOT fall back to their dev-mode defaults (repo-root-
-    // relative, which here would resolve under the signed .app bundle's own
-    // Contents/Resources — read-only once signed, and replaced wholesale on
-    // every update): point them at this app's writable, update-safe,
-    // per-user data directory instead.
+    // installation required on the target machine.
     pythonCommand = packagedPythonExecutable;
     pythonArgs = ["-m", "api"];
     cwd = packagedBackendDir;
-    const userDataDir = app.getPath("userData");
-    backendEnv = {
-      ATRIA_DB_PATH: path.join(userDataDir, "atria.sqlite3"),
-      ATRIA_LOG_PATH: path.join(userDataDir, "logs", "atria-backend.log"),
-    };
   } else {
     // Development: the repository's own `uv`-managed environment.
     pythonCommand = "uv";
     pythonArgs = ["run", "python", "-m", "api"];
     cwd = repoRoot;
+  }
+
+  // Applies whenever the backend runs packaged (independent of which branch
+  // above picked the interpreter/cwd — ATRIA_PYTHON or the bundled runtime):
+  // its database/log/backup locations must NOT fall back to their dev-mode
+  // defaults (repo-root-relative, which here would resolve under the signed
+  // .app bundle's own Contents/Resources — read-only once signed, and
+  // replaced wholesale on every update). An operator's own explicit
+  // ATRIA_DB_PATH/ATRIA_LOG_PATH (api/config.py's established override
+  // mechanism) still wins — this only fills in a default, never clobbers one
+  // already present in this process's own environment.
+  const backendEnv: Record<string, string> = {};
+  if (app.isPackaged) {
+    const userDataDir = app.getPath("userData");
+    if (process.env.ATRIA_DB_PATH == null) {
+      backendEnv.ATRIA_DB_PATH = path.join(userDataDir, "atria.sqlite3");
+    }
+    if (process.env.ATRIA_LOG_PATH == null) {
+      backendEnv.ATRIA_LOG_PATH = path.join(userDataDir, "logs", "atria-backend.log");
+    }
   }
 
   backend = new BackendClient(

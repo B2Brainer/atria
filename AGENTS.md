@@ -99,14 +99,17 @@ and pull request.
   for `v*` should be restricted to maintainers via a GitHub tag protection
   rule, consistent with (not a substitute for) this being process
   convention rather than a technical restriction today.
-- **Local structured logging:** both the Python backend
-  (`logs/atria-backend.log`, overridable via `ATRIA_LOG_PATH`;
-  `api/logging_config.py`) and the Electron main process
-  (`app.getPath("logs")/atria-main.log`, overridable via `ATRIA_LOG_PATH`;
-  `desktop/src/main/logger.ts`) write JSON-lines log records, rotated at 5 MB
-  per file with at most 3 rotated files retained. No log record ever contains
-  a secret, resolved credential, provider authentication header, or raw
-  interaction content.
+- **Local structured logging:** both the Python backend (dev default
+  `logs/atria-backend.log`, repo-root-relative; packaged builds default to
+  `app.getPath("userData")/atria-backend.log` instead — either overridable
+  via `ATRIA_DB_PATH`/`ATRIA_LOG_PATH`; `api/logging_config.py`) and the
+  Electron main process (`app.getPath("logs")/atria-main.log`, overridable
+  via `ATRIA_MAIN_LOG_PATH` — a distinct name from the backend's own
+  `ATRIA_LOG_PATH`, so one override cannot point both processes at the same
+  file; `desktop/src/main/logger.ts`) write JSON-lines log records, rotated
+  at 5 MB per file with at most 3 rotated files retained. No log record
+  ever contains a secret, resolved credential, provider authentication
+  header, or raw interaction content.
 - **Backup and recovery:** before applying a pending Alembic migration,
   `PersistenceAdapter` writes a consistent backup of the current database to
   a `backups/` directory alongside it, via SQLite's `VACUUM INTO` (correct
@@ -114,8 +117,9 @@ and pull request.
   inconsistent under WAL or a pending rollback journal). **Manual restore
   procedure:** stop the application, remove the live database file (default
   `atria.sqlite3`, or `ATRIA_DB_PATH`) **and any `<name>-wal`/`<name>-shm`
-  sidecar files alongside it** (present only if SQLite was using WAL mode;
-  harmless to remove when absent — leaving a stale one risks it being
-  replayed against the restored file on next open), replace it with the
+  (WAL mode) or `<name>-journal` (rollback-journal mode) sidecar files
+  alongside it** (harmless to remove whichever are absent; leaving a stale
+  one risks it being replayed against the restored file on next open),
+  replace it with the
   chosen file from the `backups/` subdirectory, then restart the
   application.

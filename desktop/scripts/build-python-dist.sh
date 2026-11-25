@@ -27,8 +27,18 @@ PYTHON_DIST_DIR="$RESOURCES_DIR/python-dist"
 BACKEND_DIR="$RESOURCES_DIR/backend"
 PYTHON_VERSION="3.13"
 
-rm -rf "$PYTHON_DIST_DIR" "$BACKEND_DIR"
 mkdir -p "$RESOURCES_DIR"
+# Defensive, cheap to check: if some prior state ever left python-dist/ or
+# backend/ as a symlink (never created as one by this script), resolve-then-
+# rm-rf below would follow it and delete whatever it points at, not a
+# directory under this repo.
+for path in "$PYTHON_DIST_DIR" "$BACKEND_DIR"; do
+  if [ -L "$path" ]; then
+    echo "error: $path is a symlink, refusing to remove it" >&2
+    exit 1
+  fi
+done
+rm -rf "$PYTHON_DIST_DIR" "$BACKEND_DIR"
 
 echo "==> Installing standalone CPython $PYTHON_VERSION into $PYTHON_DIST_DIR"
 uv python install "$PYTHON_VERSION" --install-dir "$PYTHON_DIST_DIR"

@@ -55,7 +55,7 @@ describe("notarization credentials (AC 2, 3)", () => {
 
   it("the notarize hook skips (not fails) when Apple credentials are absent", () => {
     const notarizeHook = readFileSync(path.join(DESKTOP_ROOT, "scripts/notarize.cjs"), "utf8");
-    expect(notarizeHook).toMatch(/if \(!appleId \|\| !applePassword \|\| !teamId\)/);
+    expect(notarizeHook).toMatch(/if \(!isSigned \|\| !appleId \|\| !applePassword \|\| !teamId\)/);
     expect(notarizeHook).toMatch(/return;/);
   });
 

@@ -63,11 +63,13 @@ export function installCrashCapture(logger: Logger): void {
     process.exit(1);
   });
   process.on("unhandledRejection", (reason) => {
-    // Lower severity than an uncaught exception by convention (and not
-    // what the spec's "process exits" language describes): logged, but
-    // does not itself terminate the process.
     logger.error("unhandled promise rejection in Electron main process", {
       error: reason instanceof Error ? reason.message : String(reason),
     });
+    // As of Node 15, the default behavior for an unhandled rejection with
+    // no listener at all is to terminate the process (the same as an
+    // uncaught exception) -- attaching this handler would otherwise
+    // silently suppress that default too.
+    process.exit(1);
   });
 }

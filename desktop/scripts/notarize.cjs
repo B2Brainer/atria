@@ -14,8 +14,13 @@ exports.default = async function notarizeHook(context) {
   const appleId = process.env.APPLE_ID;
   const applePassword = process.env.APPLE_APP_SPECIFIC_PASSWORD;
   const teamId = process.env.APPLE_TEAM_ID;
+  // Notarizing requires a code-signed input -- apple.com rejects an
+  // unsigned artifact outright, so attempting it without CSC_LINK would
+  // fail the whole release build rather than degrade to an unsigned
+  // artifact as intended.
+  const isSigned = Boolean(process.env.CSC_LINK);
 
-  if (!appleId || !applePassword || !teamId) {
+  if (!isSigned || !appleId || !applePassword || !teamId) {
     // Not "unsigned": this artifact may still be code-signed (CSC_LINK/
     // CSC_KEY_PASSWORD) — just not notarized, which Gatekeeper still
     // requires to install without a manual override. The release
