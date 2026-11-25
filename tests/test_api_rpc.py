@@ -97,10 +97,15 @@ def test_credential_operation_exceptions_are_redacted_not_passed_through(caplog)
     # CredentialPort implementation's exception text is not something this
     # dispatcher can guarantee is secret-free. This must hold for the log
     # line too, not just the RPC response: rpc.py redacts both.
-    secret = "test-should-never-appear"
+    secret_value = "test-should-never-appear"
 
-    def leaky_set_credential(provider_id: str, submitted_secret: str) -> None:
-        raise RuntimeError(f"failed storing {submitted_secret!r} for {provider_id!r}")
+    # The inner parameter must be named `secret` (not just here but) to
+    # match the "secret" key in the params dict below -- dispatch() calls
+    # method(**params), so a different parameter name would raise a
+    # TypeError that this test's generic exception handling would then
+    # mask entirely, never exercising the intended leaky-secret path.
+    def leaky_set_credential(provider_id: str, secret: str) -> None:
+        raise RuntimeError(f"failed storing {secret!r} for {provider_id!r}")
 
     dispatcher = RpcDispatcher({"set_credential": leaky_set_credential})
 
@@ -110,14 +115,14 @@ def test_credential_operation_exceptions_are_redacted_not_passed_through(caplog)
             {
                 "id": 1,
                 "method": "set_credential",
-                "params": {"provider_id": "openai", "secret": secret},
+                "params": {"provider_id": "openai", "secret": secret_value},
             }
         )
 
-    assert secret not in json.dumps(response)
+    assert secret_value not in json.dumps(response)
     assert response["error"]["message"] == "credential operation failed"
     assert len(caplog.records) == 1  # a record WAS emitted — not just secret-free if present
-    assert secret not in caplog.text
+    assert secret_value not in caplog.text
     assert "failed storing" not in caplog.text  # the leaky exception's own message
 
 
