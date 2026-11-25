@@ -6,15 +6,23 @@ import { BackendClient } from "./backend";
 import { registerIpcHandlers } from "./ipc";
 import { installCrashCapture, Logger } from "./logger";
 
-// Electron's own app.getName() (used by app.getPath("userData")/"logs")
-// defaults to package.json's "name" field ("atria-desktop") -- it does NOT
-// read electron-builder.yml's `productName: Atria`, which only controls the
+// Electron's own app.getName() (used by app.getPath("userData")/"logs",
+// AND the packaged backend's default ATRIA_DB_PATH below) defaults to
+// package.json's "name" field ("atria-desktop") -- it does NOT read
+// electron-builder.yml's `productName: Atria`, which only controls the
 // packaged .app bundle's own name/Info.plist. Without this, the packaged
-// app's userData/logs directories would be named "atria-desktop" while
-// every operator-facing reference (the .app itself, documentation, this
-// repo's own tooling) says "Atria" -- confirmed by running the packaged
-// build: the real log path was ~/Library/Logs/atria-desktop/, not
-// ~/Library/Logs/Atria/. Must be set before any app.getPath() call below.
+// app's userData/logs/database directories would be named "atria-desktop"
+// while every operator-facing reference (the .app itself, documentation,
+// this repo's own tooling) says "Atria" -- confirmed by running the
+// packaged build: the real log path was ~/Library/Logs/atria-desktop/, not
+// ~/Library/Logs/Atria/. This repo has not shipped a release build yet
+// (no prior userData to migrate); a local dev-mode build run before this
+// fix has its own data left behind under the old atria-desktop path.
+// This call must be the first thing in this module to run, before any
+// app.getPath() call anywhere in this file or an import below it --
+// nothing imported above calls app.getPath() at its own module top level
+// today, but that is this file's responsibility to keep true, not a
+// guarantee Electron itself enforces.
 app.setName("Atria");
 
 // A distinct override name from the Python backend's own `ATRIA_LOG_PATH`
