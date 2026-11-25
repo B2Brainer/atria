@@ -33,10 +33,15 @@ KNOWN_TOOLS_LOWER = {t.lower(): t for t in KNOWN_TOOLS}
 
 AGENTS_DIR = Path(__file__).resolve().parent.parent / ".claude" / "agents"
 
-# A YAML block list: `tools:` on its own line, followed by one or more
-# `  - Item` lines.
-_BLOCK_LIST_RE = re.compile(r"^tools:[ \t]*\r?\n((?:^[ \t]+-[ \t]*.+\r?\n?)+)", re.MULTILINE)
-_INLINE_RE = re.compile(r"^tools:[ \t]*(.+)$", re.MULTILINE)
+_TOP_LEVEL_KEY_RE = re.compile(r"^tools:[ \t]*(.*?)[ \t]*$")
+_LIST_ITEM_RE = re.compile(r"^[ \t]+-[ \t]*(.+?)[ \t]*$")
+
+
+def _unquote(token: str) -> str:
+    token = token.strip().strip("[]").strip()
+    if len(token) >= 2 and token[0] == token[-1] and token[0] in ("'", '"'):
+        token = token[1:-1]
+    return token.strip()
 
 
 def extract_tools_tokens(text: str) -> list[str] | None:
@@ -45,19 +50,42 @@ def extract_tools_tokens(text: str) -> list[str] | None:
     end = text.find("\n---", 3)
     if end == -1:
         return None
-    frontmatter = text[3:end]
+    lines = text[3:end].splitlines()
 
-    block_match = _BLOCK_LIST_RE.search(frontmatter)
-    if block_match:
-        items = re.findall(r"^[ \t]+-[ \t]*(.+?)\s*$", block_match.group(1), re.MULTILINE)
-        return [item.strip() for item in items if item.strip()]
+    # A `tools:` key (block scalar or inline value) may appear more than
+    # once in malformed frontmatter; YAML's own rule is last-key-wins, so
+    # scan for every top-level occurrence and keep only the last.
+    tools_line_index: int | None = None
+    inline_value = ""
+    for i, line in enumerate(lines):
+        match = _TOP_LEVEL_KEY_RE.match(line)
+        if match:
+            tools_line_index = i
+            inline_value = match.group(1)
 
-    inline_match = _INLINE_RE.search(frontmatter)
-    if inline_match:
-        raw = inline_match.group(1).strip().strip("[]")
-        return [t.strip().strip("[]").strip() for t in raw.split(",") if t.strip()]
+    if tools_line_index is None:
+        return None
 
-    return None
+    if inline_value and not inline_value.lstrip().startswith("#"):
+        raw = inline_value.strip().strip("[]")
+        return [_unquote(t) for t in raw.split(",") if t.strip()]
+
+    # Block-scalar form: `tools:` (optionally followed by blank/comment
+    # lines) then one or more `  - Item` lines. Blank and comment lines
+    # inside the block are skipped, not treated as its end — the block
+    # ends only at the first line that is non-blank, non-comment, and not
+    # a list item (typically the next top-level key, or EOF).
+    items: list[str] = []
+    for line in lines[tools_line_index + 1 :]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        item_match = _LIST_ITEM_RE.match(line)
+        if item_match is None:
+            break
+        items.append(_unquote(item_match.group(1)))
+
+    return [item for item in items if item]
 
 
 def check_file(path: Path) -> list[str]:

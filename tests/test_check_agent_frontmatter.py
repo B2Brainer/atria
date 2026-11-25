@@ -61,3 +61,33 @@ def test_check_file_rejects_unrecognized_tool(tmp_path):
     errors = check_file(path)
     assert len(errors) == 1
     assert "unrecognized tool 'NotARealTool'" in errors[0]
+
+
+def test_extract_block_list_with_blank_line_before_it():
+    text = _frontmatter("tools:\n\n  - Read\n  - Glob")
+    assert extract_tools_tokens(text) == ["Read", "Glob"]
+
+
+def test_extract_block_list_skips_internal_blank_and_comment_lines():
+    text = _frontmatter("tools:\n  - Read\n\n  # a comment\n  - Glob\n  - Bash")
+    assert extract_tools_tokens(text) == ["Read", "Glob", "Bash"]
+
+
+def test_extract_block_list_stops_at_next_top_level_key():
+    text = "---\nname: x\ntools:\n  - Read\n  - Glob\nmodel: inherit\n---\n\nbody\n"
+    assert extract_tools_tokens(text) == ["Read", "Glob"]
+
+
+def test_duplicate_tools_key_last_one_wins():
+    text = _frontmatter("tools: Read, Glob\ntools: Bash, Edit")
+    assert extract_tools_tokens(text) == ["Bash", "Edit"]
+
+
+def test_quoted_inline_tokens_are_unquoted():
+    text = _frontmatter('tools: ["Read", "Glob"]')
+    assert extract_tools_tokens(text) == ["Read", "Glob"]
+
+
+def test_quoted_block_list_tokens_are_unquoted():
+    text = _frontmatter('tools:\n  - "Read"\n  - \'Glob\'')
+    assert extract_tools_tokens(text) == ["Read", "Glob"]
