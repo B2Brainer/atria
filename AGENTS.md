@@ -91,9 +91,14 @@ and pull request.
 - **Release process:** pushing a `v*` tag triggers
   `.github/workflows/release.yml` (independent of `ci.yml`'s own push/PR
   triggers), which packages the macOS artifact and publishes it to GitHub
-  Releases — as a draft, labeled `-unsigned`, when no signing secrets are
-  configured. Obtaining a new version is always a manual download-and-install
-  from that GitHub Release; the application has no auto-update mechanism.
+  Releases — as a draft, labeled `-unsigned`, when signing AND notarization
+  secrets are not both fully configured. Obtaining a new version is always a
+  manual download-and-install from that GitHub Release; the application has
+  no auto-update mechanism. Because pushing a `v*` tag injects the signing/
+  notarization secrets into whatever commit that tag points at, tag creation
+  for `v*` should be restricted to maintainers via a GitHub tag protection
+  rule, consistent with (not a substitute for) this being process
+  convention rather than a technical restriction today.
 - **Local structured logging:** both the Python backend
   (`logs/atria-backend.log`, overridable via `ATRIA_LOG_PATH`;
   `api/logging_config.py`) and the Electron main process
