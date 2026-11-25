@@ -65,5 +65,8 @@ def test_stdout_carries_only_json_rpc_messages_even_when_a_request_fails(tmp_pat
     assert ok_response == {"id": 2, "result": []}
     # The handler's failure is logged (via api.rpc's logger.warning), and it
     # must have landed on stderr, not been silently dropped or sent to stdout.
+    # Asserted against the exact logged shape (not an incidentally-matching
+    # substring like the bare word "get"), so this fails if the log format
+    # ever changes silently.
     assert "method %r failed" not in stderr_output  # the format string itself, unsubstituted
-    assert "get" in stderr_output
+    assert "method 'get' failed" in stderr_output

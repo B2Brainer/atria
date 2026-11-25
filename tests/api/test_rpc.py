@@ -48,6 +48,40 @@ def test_unknown_method_produces_a_distinguishable_error():
     assert "error" in response
 
 
+def test_a_valid_json_non_object_line_is_a_protocol_error_not_a_crash():
+    # A line can be valid JSON yet not a JSON-RPC object (`null`, `[]`, `"x"`,
+    # `42`) — dispatch() must reject it as a protocol error rather than raise
+    # an uncaught AttributeError from `.get()` on a non-dict.
+    dispatcher = RpcDispatcher({"echo": lambda value: value})
+
+    for malformed in (None, [], "x", 42):
+        response = dispatcher.dispatch(malformed)
+        assert response is not None
+        assert "error" in response and "result" not in response
+
+
+def test_credential_operation_exceptions_are_redacted_not_passed_through():
+    # Any failure from set_credential/get_credential_status/remove_credential
+    # returns a fixed, generic message — never str(exc) — since a future
+    # CredentialPort implementation's exception text is not something this
+    # dispatcher can guarantee is secret-free.
+    def leaky_set_credential(provider_id: str, secret: str) -> None:
+        raise RuntimeError(f"failed storing {secret!r} for {provider_id!r}")
+
+    dispatcher = RpcDispatcher({"set_credential": leaky_set_credential})
+
+    response = dispatcher.dispatch(
+        {
+            "id": 1,
+            "method": "set_credential",
+            "params": {"provider_id": "openai", "secret": "sk-should-never-appear"},
+        }
+    )
+
+    assert "sk-should-never-appear" not in json.dumps(response)
+    assert response["error"]["message"] == "credential operation failed"
+
+
 def test_every_output_line_is_well_formed_json_only_protocol_messages():
     dispatcher = RpcDispatcher({"echo": lambda value: value})
     in_stream = io.StringIO(

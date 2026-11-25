@@ -21,12 +21,29 @@ from typing import IO, Any
 
 logger = logging.getLogger(__name__)
 
+# Credential operations resolve or compare against a secret internally
+# (api/handlers.py). A raw str(exc) from these three alone is never safe to
+# put on the wire or into a log: an adapter failure mode this dispatcher
+# cannot enumerate in advance (a future CredentialPort implementation, an
+# unexpected keychain error variant) could embed secret-shaped text in its
+# message. Every other operation's exceptions carry no secret material by
+# construction (core/ exceptions reference ids/references, never a resolved
+# value) and keep their original, more diagnosable text.
+_CREDENTIAL_METHODS = frozenset(
+    {"set_credential", "get_credential_status", "remove_credential"}
+)
+_REDACTED_CREDENTIAL_ERROR = "credential operation failed"
+
 
 class RpcDispatcher:
     def __init__(self, methods: dict[str, Callable[..., Any]]) -> None:
         self._methods = methods
 
     def dispatch(self, message: dict) -> dict | None:
+        if not isinstance(message, dict):
+            logger.warning("malformed JSON-RPC message (not an object): %r", message)
+            return _error(None, "malformed JSON-RPC message: expected an object")
+
         request_id = message.get("id")
         method_name = message.get("method")
         params = message.get("params") or {}
@@ -38,6 +55,9 @@ class RpcDispatcher:
         try:
             result = method(**params) if isinstance(params, dict) else method(*params)
         except Exception as exc:  # noqa: BLE001 - any core/adapter failure propagates as an RPC error
+            if method_name in _CREDENTIAL_METHODS:
+                logger.warning("method %r failed: %s", method_name, _REDACTED_CREDENTIAL_ERROR)
+                return _error(request_id, _REDACTED_CREDENTIAL_ERROR)
             logger.warning("method %r failed: %s", method_name, exc)
             return _error(request_id, str(exc))
         return {"id": request_id, "result": result}
