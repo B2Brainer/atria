@@ -147,6 +147,21 @@ describe("BackendClient", () => {
     expect(unhandled).toEqual([]);
   });
 
+  it("stop() resolves promptly (not after the shutdown timeout) for a spawn-failed child", async () => {
+    // Regression: a child that never actually spawned (ENOENT) has no pid
+    // and may never emit 'exit', so stop()'s old liveness guard (exitCode/
+    // signalCode only) would proceed to kill() it and wait out the full
+    // 5s GRACEFUL_SHUTDOWN_TIMEOUT_MS for an 'exit' that can't arrive.
+    client = new BackendClient("this-command-does-not-exist", [], process.cwd());
+    await client.start().catch(() => undefined);
+
+    const start = Date.now();
+    await client.stop();
+    const elapsed = Date.now() - start;
+
+    expect(elapsed).toBeLessThan(1000);
+  });
+
   it("stop() terminates the child process and leaves no orphan", async () => {
     client = new BackendClient("node", [fixturePath], process.cwd());
     await client.start();

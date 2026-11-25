@@ -51,8 +51,8 @@ export class BackendClient {
   }
 
   // A readiness failure with no in-flight call() awaiting it yet (notably,
-  // a restart triggered by handleExit() with nobody currently calling the
-  // backend) would otherwise be an unhandled promise rejection — Node
+  // a restart triggered by onProcessFailure() with nobody currently calling
+  // the backend) would otherwise be an unhandled promise rejection — Node
   // terminates the process on one by default. This attaches a side
   // observer that swallows it for Node's bookkeeping only; `this.ready`
   // itself is untouched, so a later `await this.ready` (in call() or a
@@ -77,16 +77,18 @@ export class BackendClient {
     stderrLines.on("line", (line) => this.onLog(line));
 
     let settleReady: ((error: Error | null) => void) | null = null;
+    // A spawn/stdio 'error', an 'exit', and a readiness timeout are three
+    // independent sources that can all fire for the same failed attempt —
+    // this guards the restart/give-up bookkeeping (onProcessFailure) so it
+    // runs exactly once per spawnAndWaitReady() call, no matter which
+    // source notices first or whether more than one does.
+    let failureHandled = false;
 
     const readyPromise = new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
         settleReady?.(new BackendUnavailableError("backend did not report readiness in time"));
       }, this.readyTimeoutMs);
 
-      // The single settlement path every readiness outcome funnels through
-      // (the ready line, the timeout, a spawn/stdio 'error' event) — so
-      // whichever fires first wins and every later one is a no-op, instead
-      // of each needing its own "did I already settle?" guard.
       settleReady = (error) => {
         settleReady = null;
         clearTimeout(timeout);
@@ -95,6 +97,10 @@ export class BackendClient {
       };
 
       stdoutLines.on("line", (line) => {
+        // A stale child's (see below) belated output must never resolve or
+        // reject a LATER attempt's readiness, nor be dispatched as a
+        // message against the current child's pending calls.
+        if (child !== this.process) return;
         let message: RpcMessage;
         try {
           message = JSON.parse(line) as RpcMessage;
@@ -110,9 +116,34 @@ export class BackendClient {
       });
     });
 
+    // The one place that both settles this attempt's readiness and runs
+    // the bounded restart/give-up decision — invoked by 'exit', by a
+    // spawn/stdio 'error', and by the readiness timeout alike, so the
+    // restart counter is never bypassed or double-counted regardless of
+    // which of those fires (or how many do) for one failed attempt.
+    const onProcessFailure = (error: Error): void => {
+      if (child !== this.process || failureHandled) return;
+      failureHandled = true;
+      settleReady?.(error);
+      this.rejectAllPending(error);
+
+      if (this.shuttingDown) return;
+      if (this.restartCount >= MAX_RESTART_ATTEMPTS) {
+        this.onLog(`backend exceeded ${MAX_RESTART_ATTEMPTS} restart attempts; giving up`);
+        return;
+      }
+      this.restartCount += 1;
+      this.onLog(`restarting backend (attempt ${this.restartCount}/${MAX_RESTART_ATTEMPTS})`);
+      this.ready = this.spawnAndWaitReady();
+      this.preventUnhandledRejection(this.ready);
+    };
+
     child.on("exit", (code) => {
+      if (child !== this.process) return;
       this.onLog(`backend process exited (code ${code ?? "unknown"})`);
-      this.handleExit();
+      onProcessFailure(
+        new BackendUnavailableError("backend process exited while a request was pending"),
+      );
     });
 
     // Without this listener, a failed spawn (the command not found, a bad
@@ -120,23 +151,28 @@ export class BackendClient {
     // ChildProcess, which crashes the whole Electron main process rather
     // than surfacing as a normal BackendUnavailableError. A failed spawn is
     // not guaranteed to also emit 'exit' on every platform/Node version, so
-    // this settles (rejects) readiness directly here rather than relying
-    // solely on 'exit' -> handleExit() to eventually notice.
+    // this runs the same onProcessFailure() path directly rather than
+    // relying solely on 'exit' to eventually notice (failureHandled above
+    // ensures a later 'exit' for this same attempt is a no-op, not a
+    // second restart).
     child.on("error", (err) => {
+      if (child !== this.process) return;
       this.onLog(`backend process error: ${err.message}`);
-      settleReady?.(new BackendUnavailableError(`backend process error: ${err.message}`));
+      onProcessFailure(new BackendUnavailableError(`backend process error: ${err.message}`));
     });
 
     // child.on("error") does NOT receive errors from the stdin stream
     // itself (e.g. EPIPE writing to an already-exited process) — those are
     // a separate EventEmitter with their own 'error' event, uncaught by
     // default. A write failure can't be attributed to one specific pending
-    // call, so every call currently awaiting a response is rejected.
+    // call, so every call currently awaiting a response against THIS
+    // child is rejected; the `child !== this.process` guard stops a late
+    // error from a torn-down previous child from reaching calls already
+    // pending against a freshly restarted one.
     child.stdin.on("error", (err) => {
+      if (child !== this.process) return;
       this.onLog(`backend stdin error: ${err.message}`);
-      this.rejectAllPending(
-        new BackendUnavailableError(`backend stdin error: ${err.message}`),
-      );
+      this.rejectAllPending(new BackendUnavailableError(`backend stdin error: ${err.message}`));
     });
 
     return readyPromise;
@@ -152,23 +188,6 @@ export class BackendClient {
     } else {
       pending.resolve(message.result);
     }
-  }
-
-  private handleExit(): void {
-    this.rejectAllPending(
-      new BackendUnavailableError("backend process exited while a request was pending"),
-    );
-
-    if (this.shuttingDown) return;
-
-    if (this.restartCount >= MAX_RESTART_ATTEMPTS) {
-      this.onLog(`backend exceeded ${MAX_RESTART_ATTEMPTS} restart attempts; giving up`);
-      return;
-    }
-    this.restartCount += 1;
-    this.onLog(`restarting backend (attempt ${this.restartCount}/${MAX_RESTART_ATTEMPTS})`);
-    this.ready = this.spawnAndWaitReady();
-    this.preventUnhandledRejection(this.ready);
   }
 
   async call<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
@@ -187,18 +206,45 @@ export class BackendClient {
   async stop(): Promise<void> {
     this.shuttingDown = true;
     const child = this.process;
-    if (!child || child.exitCode !== null || child.signalCode !== null) return;
+    // child.pid is undefined when the process never actually spawned (e.g.
+    // ENOENT) — such a child may never emit 'exit' at all, so without this
+    // check stop() would otherwise wait out the full
+    // GRACEFUL_SHUTDOWN_TIMEOUT_MS every time, delaying whatever waits on
+    // stop() (e.g. the startup-failure error dialog) for no reason.
+    if (!child || child.exitCode !== null || child.signalCode !== null || child.pid === undefined) {
+      return;
+    }
 
     await new Promise<void>((resolve) => {
       const timeout = setTimeout(() => {
-        child.kill("SIGKILL");
+        this.tryKill(child, "SIGKILL");
         resolve();
       }, GRACEFUL_SHUTDOWN_TIMEOUT_MS);
       child.once("exit", () => {
         clearTimeout(timeout);
         resolve();
       });
-      child.kill("SIGTERM");
+      if (!this.tryKill(child, "SIGTERM")) {
+        // kill() itself failed synchronously (rare, but documented as
+        // possible for an invalid signal/permission case) — nothing will
+        // ever fire 'exit' for this attempt, so resolve immediately rather
+        // than waiting out the timeout for an event that can't arrive.
+        clearTimeout(timeout);
+        resolve();
+      }
     });
+  }
+
+  // child.kill() is documented to return false (not throw) on an ordinary
+  // failure to deliver the signal, but this still guards against any
+  // unexpected throw so stop() itself can never reject — its callers
+  // (before-quit, the startup-failure path) depend on that.
+  private tryKill(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): boolean {
+    try {
+      return child.kill(signal);
+    } catch (err) {
+      this.onLog(`backend kill(${signal}) failed: ${(err as Error).message}`);
+      return false;
+    }
   }
 }
