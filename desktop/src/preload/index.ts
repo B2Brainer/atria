@@ -4,7 +4,7 @@
 // `fs`, `child_process`, or unrestricted Node API reaches renderer code.
 import { contextBridge, ipcRenderer } from "electron";
 
-import { CHANNELS } from "../main/ipc";
+import { CHANNELS } from "../shared/channels";
 import type {
   AtriaBridge,
   CredentialStatus,

@@ -4,16 +4,7 @@
 import { ipcMain } from "electron";
 
 import type { BackendClient } from "./backend";
-
-export const CHANNELS = {
-  initiate: "atria:initiate",
-  get: "atria:get",
-  listByCycle: "atria:list-by-cycle",
-  listCycles: "atria:list-cycles",
-  setCredential: "atria:set-credential",
-  getCredentialStatus: "atria:get-credential-status",
-  removeCredential: "atria:remove-credential",
-} as const;
+import { CHANNELS } from "../shared/channels";
 
 export function registerIpcHandlers(backend: BackendClient): void {
   ipcMain.handle(CHANNELS.initiate, (_event, request: unknown, cycleId: string) =>
