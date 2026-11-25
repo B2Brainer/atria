@@ -2,10 +2,19 @@
 
 from uuid import uuid4
 
-from core.interaction.models import InteractionRequest, InteractionResult
+import pytest
+from core.interaction.models import InteractionRequest, InteractionResult, ProviderConfiguration
 from core.interaction.operations import InteractionManagement
 from core.records.operations import InteractionRecordManagement
 from tests.fakes import FakeAIProviderPort, FakeCredentialPort, FakePersistencePort
+
+_PROVIDERS = {
+    "anthropic": ProviderConfiguration(
+        provider_id="anthropic",
+        endpoint="https://example.invalid/v1/complete",
+        credential_reference="anthropic",
+    )
+}
 
 
 def _request() -> InteractionRequest:
@@ -17,7 +26,7 @@ def test_initiate_returns_a_record_matching_the_request_and_provider_result():
     provider = FakeAIProviderPort(expected_result)
     credentials = FakeCredentialPort()
     records = InteractionRecordManagement(FakePersistencePort())
-    interaction = InteractionManagement(uuid4(), provider, credentials, records)
+    interaction = InteractionManagement(uuid4(), provider, credentials, records, _PROVIDERS)
     request = _request()
 
     record = interaction.initiate(request)
@@ -30,7 +39,7 @@ def test_initiate_isolates_the_record_from_later_mutation_of_the_original_reques
     provider = FakeAIProviderPort(InteractionResult(output="ok", status="success"))
     credentials = FakeCredentialPort()
     records = InteractionRecordManagement(FakePersistencePort())
-    interaction = InteractionManagement(uuid4(), provider, credentials, records)
+    interaction = InteractionManagement(uuid4(), provider, credentials, records, _PROVIDERS)
     request = _request()
 
     record = interaction.initiate(request)
@@ -47,7 +56,7 @@ def test_initiate_fetches_the_credential_before_invoking_the_provider():
     provider = FakeAIProviderPort(InteractionResult(output="ok", status="success"), call_log)
     credentials = FakeCredentialPort(call_log)
     records = InteractionRecordManagement(FakePersistencePort())
-    interaction = InteractionManagement(uuid4(), provider, credentials, records)
+    interaction = InteractionManagement(uuid4(), provider, credentials, records, _PROVIDERS)
 
     interaction.initiate(_request())
 
@@ -65,7 +74,7 @@ def test_initiate_registers_the_assembled_record_with_record_management():
     persistence = FakePersistencePort()
     records = InteractionRecordManagement(persistence)
     cycle_id = uuid4()
-    interaction = InteractionManagement(cycle_id, provider, credentials, records)
+    interaction = InteractionManagement(cycle_id, provider, credentials, records, _PROVIDERS)
 
     record = interaction.initiate(_request())
 
@@ -77,10 +86,24 @@ def test_successive_initiate_calls_assign_increasing_sequence_within_the_cycle()
     provider = FakeAIProviderPort(InteractionResult(output="ok", status="success"))
     credentials = FakeCredentialPort()
     records = InteractionRecordManagement(FakePersistencePort())
-    interaction = InteractionManagement(uuid4(), provider, credentials, records)
+    interaction = InteractionManagement(uuid4(), provider, credentials, records, _PROVIDERS)
 
     first = interaction.initiate(_request())
     second = interaction.initiate(_request())
 
     assert first.sequence == 1
     assert second.sequence == 2
+
+
+def test_initiate_raises_before_invoking_the_provider_when_provider_id_is_unconfigured():
+    call_log: list[str] = []
+    provider = FakeAIProviderPort(InteractionResult(output="ok", status="success"), call_log)
+    credentials = FakeCredentialPort(call_log)
+    records = InteractionRecordManagement(FakePersistencePort())
+    interaction = InteractionManagement(uuid4(), provider, credentials, records, {})
+    request = InteractionRequest(input="hi", provider_id="unknown", model_id="claude")
+
+    with pytest.raises(KeyError):
+        interaction.initiate(request)
+
+    assert call_log == []
