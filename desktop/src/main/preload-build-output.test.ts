@@ -16,9 +16,13 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 const desktopRoot = path.resolve(__dirname, "../..");
 const preloadOutputPath = path.join(desktopRoot, "out/preload/index.js");
+// The already-installed local binary, not `npx electron-vite`: npx resolves
+// and may fetch from the registry if its local-first lookup ever misses,
+// which a test has no business doing (network access, version drift).
+const electronViteBin = path.join(desktopRoot, "node_modules/.bin/electron-vite");
 
 beforeAll(() => {
-  execFileSync("npx", ["electron-vite", "build"], { cwd: desktopRoot, stdio: "pipe" });
+  execFileSync(electronViteBin, ["build"], { cwd: desktopRoot, stdio: "pipe" });
 }, 60_000);
 
 describe("preload build output", () => {
