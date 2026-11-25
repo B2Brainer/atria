@@ -41,6 +41,16 @@ export class BackendClient {
   // un-awaited by anyone. The first attempt's failure is reported to
   // start()'s caller instead, who decides whether to retry.
   private everReady = false;
+  // Set once restart attempts are exhausted. call() checks this directly
+  // rather than inferring unavailability from this.ready's settled state
+  // or the current child's exitCode/signalCode: a stale `this.ready` can
+  // be a long-settled RESOLVED promise from an attempt that became ready
+  // and only crashed later (settleReady is already null by then, so a
+  // later onProcessFailure has nothing to reject), and relying on
+  // exitCode/signalCode alone depends on their having been set by the
+  // time call() checks them — an explicit terminal flag has no such
+  // timing dependency.
+  private permanentlyUnavailable = false;
 
   constructor(
     private readonly command: string,
@@ -164,6 +174,7 @@ export class BackendClient {
       }
       if (this.restartCount >= MAX_RESTART_ATTEMPTS) {
         this.onLog(`backend exceeded ${MAX_RESTART_ATTEMPTS} restart attempts; giving up`);
+        this.permanentlyUnavailable = true;
         return;
       }
       this.restartCount += 1;
@@ -226,7 +237,10 @@ export class BackendClient {
   }
 
   async call<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-    await this.ready;
+    await this.ready.catch(() => undefined);
+    if (this.permanentlyUnavailable) {
+      throw new BackendUnavailableError("backend process is not running");
+    }
     const child = this.process;
     if (!child || child.exitCode !== null || child.signalCode !== null) {
       throw new BackendUnavailableError("backend process is not running");
