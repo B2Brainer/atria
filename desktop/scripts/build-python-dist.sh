@@ -16,12 +16,25 @@
 # bundle's `Contents/Resources`.
 set -euo pipefail
 
-# `pwd -P` (not plain `pwd`): resolves any symlink component in this
-# script's own invocation path, so REPO_ROOT (and every destructive `rm -rf`
-# target derived from it below) is always this script's real location on
-# disk, never a logical, not-yet-resolved path through a symlinked
-# directory or a symlinked invocation of this script itself.
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+# Resolve this script's OWN path fully first: `pwd -P` alone only resolves
+# symlinks in a path's directory components -- if the script is invoked
+# THROUGH a symlink (BASH_SOURCE[0] pointing at the symlink, not its
+# target), dirname(BASH_SOURCE[0]) is the symlink's own directory, and every
+# later check below would then just be self-consistent with that WRONG
+# base, not actually anchored to this repository. Walk the symlink chain
+# (the portable idiom -- works with BSD `readlink`, no `-f`/`realpath`
+# dependency) before resolving directories.
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  SOURCE_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  case "$SOURCE" in
+    /*) ;;
+    *) SOURCE="$SOURCE_DIR/$SOURCE" ;;
+  esac
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
 RESOURCES_DIR="$REPO_ROOT/desktop/resources"
 PYTHON_DIST_DIR="$RESOURCES_DIR/python-dist"
 BACKEND_DIR="$RESOURCES_DIR/backend"
