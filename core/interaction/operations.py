@@ -10,9 +10,10 @@ it assembles into); multiple clean interactions may be initiated against the
 same cycle, each isolated from residual state carried by the previous ones.
 """
 
+from collections.abc import Mapping
 from uuid import UUID
 
-from core.interaction.models import InteractionRequest, InteractionResult
+from core.interaction.models import InteractionRequest, InteractionResult, ProviderConfiguration
 from core.ports.credentials import CredentialPort
 from core.ports.provider import AIProviderPort
 from core.records.models import InteractionRecord
@@ -26,11 +27,13 @@ class InteractionManagement:
         provider: AIProviderPort,
         credentials: CredentialPort,
         records: InteractionRecordManagement,
+        providers: Mapping[str, ProviderConfiguration],
     ) -> None:
         self._cycle_id = cycle_id
         self._provider = provider
         self._credentials = credentials
         self._records = records
+        self._providers = providers
 
     def initiate(self, request: InteractionRequest) -> InteractionRecord:
         clean_request = self._prepare_clean_interaction(request)
@@ -41,13 +44,20 @@ class InteractionManagement:
     def _prepare_clean_interaction(self, request: InteractionRequest) -> InteractionRequest:
         return request.model_copy(deep=True)
 
-    def _select_provider(self, request: InteractionRequest) -> str:
-        # The resolved credential is not passed on to AIProviderPort.execute(): the
-        # Interfaces specification's execute(request) takes no credential parameter.
-        # How a resolved secret reaches the provider call is an adapter-contract
-        # question deferred to Increments 3/4; this increment only has to establish
-        # that the credential lookup happens before provider invocation (AC4).
-        return self._credentials.get(request.provider_id)
+    def _select_provider(self, request: InteractionRequest) -> None:
+        # Fail-fast ahead of AIProviderPort.execute(): resolve the configured
+        # provider and confirm its credential is retrievable before the provider
+        # call is ever made (Increment 4 AC11/AC12). This is a validation-only
+        # check: the resolved secret is not returned or passed on to execute()
+        # (the Interfaces specification's execute(request) takes no credential
+        # parameter) — AIProviderAdapter resolves it again itself via its own
+        # injected CredentialPort (Increment 4's settled credential-delivery
+        # decision), so it never needs to flow through this method's return value.
+        try:
+            configuration = self._providers[request.provider_id]
+        except KeyError:
+            raise KeyError(f"no ProviderConfiguration registered for {request.provider_id!r}")
+        self._credentials.get(configuration.credential_reference)
 
     def _assemble_record(
         self, request: InteractionRequest, result: InteractionResult
