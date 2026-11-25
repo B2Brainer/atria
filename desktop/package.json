@@ -2,22 +2,38 @@
   "name": "atria-desktop",
   "version": "0.1.0",
   "private": true,
-  "description": "Atria desktop renderer — base TypeScript tooling (Increment 1). Electron main/preload/renderer scaffolding is reserved for Increment 5.",
+  "description": "Atria desktop application — Electron main/preload/renderer (Increment 5).",
   "type": "module",
+  "main": "./out/main/index.js",
   "engines": {
     "node": "24.x"
   },
   "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
     "test": "vitest run",
     "lint": "eslint ."
   },
   "devDependencies": {
-    "typescript": "^6.0.3",
-    "vite": "^8.3.8",
-    "vitest": "^5.1.1",
-    "eslint": "^10.15.0",
     "@eslint/js": "^10.0.1",
+    "@testing-library/jest-dom": "^8.0.0",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^24.19.2",
+    "@types/react": "^19.3.1",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "electron": "^45.5.0",
+    "electron-vite": "^6.0.0",
+    "eslint": "^10.15.0",
+    "jsdom": "^31.0.1",
+    "typescript": "^6.0.3",
     "typescript-eslint": "^8.74.0",
-    "@types/node": "^24.19.2"
+    "vite": "^8.3.8",
+    "vitest": "^5.1.1"
+  },
+  "dependencies": {
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   }
 }

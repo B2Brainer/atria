@@ -1,10 +1,13 @@
 """InteractionRecordManagement — manages interaction records independently of providers.
 
 Public contract (RecordInterface, per the Interfaces specification): ``get()``
-and ``list_by_cycle()``. ``_assign_sequence()``, ``_register_interaction()``,
-and ``_reconstruct_conversation()`` are internal collaboration operations (per
-the Detailed Behavior specification) used by this component and by
-``InteractionManagement``; they are not part of the module's public contract.
+and ``list_by_cycle()``, plus ``list_cycles()`` (Increment 5 — the one
+narrowly justified addition enumerating every cycle with persisted records,
+for desktop conversation-history discovery). ``_assign_sequence()``,
+``_register_interaction()``, and ``_reconstruct_conversation()`` are internal
+collaboration operations (per the Detailed Behavior specification) used by
+this component and by ``InteractionManagement``; they are not part of the
+module's public contract.
 """
 
 from uuid import UUID
@@ -32,6 +35,9 @@ class InteractionRecordManagement:
     def list_by_cycle(self, cycle_id: UUID) -> list[InteractionRecord]:
         records = self._persistence.list_by_cycle(cycle_id)
         return self._reconstruct_conversation(records)
+
+    def list_cycles(self) -> list[UUID]:
+        return self._persistence.list_cycles()
 
     def _reconstruct_conversation(
         self, records: list[InteractionRecord]
