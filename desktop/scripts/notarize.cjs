@@ -1,0 +1,37 @@
+// electron-builder `afterSign` hook (Increment 6): notarizes the signed
+// macOS artifact when Apple Developer credentials are present as
+// environment variables (populated from GitHub Actions secrets in the
+// release workflow) — and skips cleanly, without failing the build, when
+// they are not. Apple Developer Program enrollment is not assumed to exist
+// yet; this hook is written to work correctly whenever those credentials
+// are supplied, not to require them now.
+const { notarize } = require("@electron/notarize");
+
+exports.default = async function notarizeHook(context) {
+  const { electronPlatformName, appOutDir, packager } = context;
+  if (electronPlatformName !== "darwin") return;
+
+  const appleId = process.env.APPLE_ID;
+  const applePassword = process.env.APPLE_APP_SPECIFIC_PASSWORD;
+  const teamId = process.env.APPLE_TEAM_ID;
+
+  if (!appleId || !applePassword || !teamId) {
+    console.log(
+      "[notarize] APPLE_ID/APPLE_APP_SPECIFIC_PASSWORD/APPLE_TEAM_ID not set — " +
+        "skipping notarization; this build's artifact is unsigned/development-only.",
+    );
+    return;
+  }
+
+  const appName = packager.appInfo.productFilename;
+  const appPath = `${appOutDir}/${appName}.app`;
+
+  console.log(`[notarize] Submitting ${appPath} for notarization...`);
+  await notarize({
+    appPath,
+    appleId,
+    appleIdPassword: applePassword,
+    teamId,
+  });
+  console.log("[notarize] Notarization complete.");
+};

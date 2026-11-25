@@ -71,3 +71,42 @@ Run from the repository root unless noted.
 
 These are the exact steps CI (`.github/workflows/ci.yml`) runs on every push
 and pull request.
+
+## Distribution and Operations (Increment 6)
+
+- **Packaging:** `npm run package:mac` (inside `desktop/`) builds the
+  renderer/main/preload bundles, provisions a standalone `uv`-managed Python
+  runtime with the project's locked dependencies installed directly into it
+  (`desktop/scripts/build-python-dist.sh` — no PyInstaller or other freezing
+  tool), and runs `electron-builder` to produce a `.dmg`/`.zip` under
+  `desktop/dist/`. The packaged application does not require Python, `uv`, or
+  Node.js to be separately installed on the target machine.
+- **Signing/notarization:** macOS code signing and notarization run
+  automatically when `CSC_LINK`/`CSC_KEY_PASSWORD` (signing) and
+  `APPLE_ID`/`APPLE_APP_SPECIFIC_PASSWORD`/`APPLE_TEAM_ID` (notarization) are
+  present as environment variables / GitHub Actions secrets; their absence
+  does not fail the build — it produces an unsigned, clearly labeled
+  development artifact instead (see `desktop/electron-builder.yml`,
+  `desktop/scripts/notarize.cjs`).
+- **Release process:** pushing a `v*` tag triggers
+  `.github/workflows/release.yml` (independent of `ci.yml`'s own push/PR
+  triggers), which packages the macOS artifact and publishes it to GitHub
+  Releases — as a draft, labeled `-unsigned`, when no signing secrets are
+  configured. Obtaining a new version is always a manual download-and-install
+  from that GitHub Release; the application has no auto-update mechanism.
+- **Local structured logging:** both the Python backend
+  (`logs/atria-backend.log`, overridable via `ATRIA_LOG_PATH`;
+  `api/logging_config.py`) and the Electron main process
+  (`app.getPath("logs")/atria-main.log`, overridable via `ATRIA_LOG_PATH`;
+  `desktop/src/main/logger.ts`) write JSON-lines log records, rotated at 5 MB
+  per file with at most 3 rotated files retained. No log record ever contains
+  a secret, resolved credential, provider authentication header, or raw
+  interaction content.
+- **Backup and recovery:** before applying a pending Alembic migration,
+  `PersistenceAdapter` writes a consistent backup of the current database to
+  a `backups/` directory alongside it, via SQLite's `VACUUM INTO` (correct
+  regardless of journal mode — not a plain file copy, which can be
+  inconsistent under WAL or a pending rollback journal). **Manual restore
+  procedure:** stop the application, replace the live database file (default
+  `atria.sqlite3`, or `ATRIA_DB_PATH`) with the chosen file from its
+  `backups/` subdirectory, then restart the application.

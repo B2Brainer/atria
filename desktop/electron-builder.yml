@@ -1,0 +1,41 @@
+# electron-builder configuration (Increment 6 — Distribution and Operations).
+#
+# Packaging: bundles the standalone Python runtime + locked backend
+# dependencies and the backend source (`desktop/resources/python-dist`,
+# `desktop/resources/backend` — produced by
+# `desktop/scripts/build-python-dist.sh`, run before `electron-builder` via
+# the `package:prepare` npm script) as `extraResources`, so the packaged
+# application never requires Python, `uv`, or Node.js development tooling
+# on the target machine.
+#
+# Signing/notarization: macOS code signing uses electron-builder's standard
+# `CSC_LINK`/`CSC_KEY_PASSWORD` environment variables (populated from GitHub
+# Actions secrets in the release workflow); their absence does not fail the
+# build — electron-builder falls back to an unsigned artifact, which the
+# release workflow then labels as a development build (see
+# `.github/workflows/release.yml`). Notarization runs via the `afterSign`
+# hook (`scripts/notarize.cjs`), itself conditional on Apple ID credentials
+# being present as environment variables, and is a no-op otherwise.
+appId: com.atria.desktop
+productName: Atria
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+extraResources:
+  - from: resources/python-dist
+    to: python-dist
+  - from: resources/backend
+    to: backend
+mac:
+  category: public.app-category.productivity
+  target:
+    - dmg
+    - zip
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+afterSign: scripts/notarize.cjs

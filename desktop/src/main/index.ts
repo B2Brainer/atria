@@ -4,10 +4,27 @@ import { app, BrowserWindow, dialog } from "electron";
 
 import { BackendClient } from "./backend";
 import { registerIpcHandlers } from "./ipc";
+import { installCrashCapture, Logger } from "./logger";
+
+const logger = new Logger(
+  process.env.ATRIA_LOG_PATH ?? path.join(app.getPath("logs"), "atria-main.log"),
+);
+installCrashCapture(logger);
 
 // The repository root (one level above `desktop/`), where `python -m api`
 // must be invoked from so its `core`/`adapters`/`api` package imports resolve.
+// In a packaged build there is no repository checkout: the bundled backend
+// (standalone Python runtime + `core`/`adapters`/`api` source, Increment 6)
+// ships under `process.resourcesPath/backend` instead, via electron-builder's
+// `extraResources`.
 const repoRoot = path.resolve(app.getAppPath(), "..");
+const packagedBackendDir = path.join(process.resourcesPath, "backend");
+const packagedPythonExecutable = path.join(
+  process.resourcesPath,
+  "python-dist",
+  "bin",
+  "python3",
+);
 
 let backend: BackendClient | null = null;
 let mainWindow: BrowserWindow | null = null;
@@ -32,12 +49,33 @@ function createWindow(): void {
 }
 
 async function startBackend(): Promise<void> {
-  const pythonCommand = process.env.ATRIA_PYTHON ?? "uv";
-  const pythonArgs =
-    process.env.ATRIA_PYTHON != null ? ["-m", "api"] : ["run", "python", "-m", "api"];
+  let pythonCommand: string;
+  let pythonArgs: string[];
+  let cwd: string;
 
-  backend = new BackendClient(pythonCommand, pythonArgs, repoRoot, (line) => {
+  if (process.env.ATRIA_PYTHON != null) {
+    // Test/override hook (established in Increment 5): an explicit
+    // interpreter path, invoked directly with no `uv run` wrapper.
+    pythonCommand = process.env.ATRIA_PYTHON;
+    pythonArgs = ["-m", "api"];
+    cwd = repoRoot;
+  } else if (app.isPackaged) {
+    // Packaged build (Increment 6): spawn the bundled, standalone Python
+    // runtime against the bundled backend source — no `uv`/dev Python
+    // installation required on the target machine.
+    pythonCommand = packagedPythonExecutable;
+    pythonArgs = ["-m", "api"];
+    cwd = packagedBackendDir;
+  } else {
+    // Development: the repository's own `uv`-managed environment.
+    pythonCommand = "uv";
+    pythonArgs = ["run", "python", "-m", "api"];
+    cwd = repoRoot;
+  }
+
+  backend = new BackendClient(pythonCommand, pythonArgs, cwd, (line) => {
     console.error(`[atria-backend] ${line}`);
+    logger.info(line, { source: "backend" });
   });
   await backend.start();
   registerIpcHandlers(backend);

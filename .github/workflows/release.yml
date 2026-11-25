@@ -1,0 +1,64 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  package-mac:
+    name: Package macOS (Node 24 LTS)
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@e4db8464a088ece1b920f60402e813ea4de65b8f # v4
+        with:
+          python-version: "3.13"
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - run: npm ci
+
+      - name: Build and package (unsigned, when no Apple credentials are configured)
+        env:
+          # electron-builder's standard signing env vars. Their absence does
+          # not fail this step — electron-builder falls back to an unsigned
+          # artifact (see electron-builder.yml); notarize.cjs's afterSign
+          # hook similarly skips without APPLE_ID/APPLE_APP_SPECIFIC_PASSWORD/
+          # APPLE_TEAM_ID. All four are optional repository secrets, added
+          # only once real Apple Developer Program credentials exist.
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run package:mac
+
+      - name: Label unsigned artifacts as development builds
+        if: ${{ secrets.CSC_LINK == '' }}
+        working-directory: desktop/dist
+        run: |
+          for f in *.dmg *.zip; do
+            [ -e "$f" ] || continue
+            mv "$f" "${f%.*}-unsigned.${f##*.}"
+          done
+
+      - uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7785e276c # v2
+        with:
+          draft: ${{ secrets.CSC_LINK == '' }}
+          files: |
+            desktop/dist/*.dmg
+            desktop/dist/*.zip

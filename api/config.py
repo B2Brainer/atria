@@ -56,3 +56,7 @@ def db_path() -> str:
 
 def keychain_service() -> str:
     return os.environ.get("ATRIA_KEYCHAIN_SERVICE", "com.atria.credentials")
+
+
+def log_path() -> str:
+    return os.environ.get("ATRIA_LOG_PATH", str(_REPO_ROOT / "logs" / "atria-backend.log"))
