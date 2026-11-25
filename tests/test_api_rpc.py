@@ -1,4 +1,11 @@
-"""Acceptance criteria 3, 4: JSON-RPC framing, correlation, and stdout reservation."""
+"""Acceptance criteria 3, 4: JSON-RPC framing, correlation, and stdout reservation.
+
+Lives outside tests/api/ deliberately: RpcDispatcher itself has no
+platform dependency, and (since api/handlers.py's Composition import is
+now TYPE_CHECKING-only) neither does importing api.handlers for
+OPERATIONS/_CREDENTIAL_METHODS — this file's tests must run on every CI
+runner, not just macOS (tests/api/conftest.py skips its whole directory
+on non-darwin because api/composition.py wires a real CredentialAdapter)."""
 
 import io
 import json

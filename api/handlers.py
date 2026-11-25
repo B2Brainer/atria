@@ -23,12 +23,19 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from core.interaction.models import InteractionRequest
 
-from api.composition import Composition
+if TYPE_CHECKING:
+    # Type-only: Composition is never referenced at runtime below (only as
+    # this annotation, deferred by `from __future__ import annotations`).
+    # A real top-level import would make importing this module require the
+    # darwin-only CredentialAdapter api.composition itself imports — which
+    # a module that only needs OPERATIONS/dispatch_table (e.g. a test) has
+    # no reason to pull in.
+    from api.composition import Composition
 
 _UNMASKED_SUFFIX_LENGTH = 4
 
