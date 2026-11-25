@@ -96,6 +96,13 @@ def test_no_subprocess_spawned_during_store_get_delete(adapter, cleanup):
         patch("os.execvpe", side_effect=AssertionError("os.execvpe invoked")),
         patch("os.system", side_effect=AssertionError("os.system invoked")),
         patch("os.popen", side_effect=AssertionError("os.popen invoked")),
+        # os.spawn*/os.execl*/os.execlp/os.execle are pure-Python wrappers over
+        # os.fork()+os.exec*() (CPython's os.py _spawnvef); patching os.fork
+        # here closes the entire os.spawn* family in one patch (verified
+        # directly: os.spawnv raises through this patch, not through
+        # posix_spawn), and os.execv/execve/execvp above already cover
+        # os.execl/execle/execlp transitively (also verified directly).
+        patch("os.fork", side_effect=AssertionError("os.fork invoked")),
     ):
         adapter.store("ref-no-subprocess", "secret")
         assert adapter.get("ref-no-subprocess") == "secret"

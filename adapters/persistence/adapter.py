@@ -46,10 +46,14 @@ class PersistenceAdapter(PersistencePort):
         # `sqlalchemy.url` string. Avoids two real bugs a URL-string approach
         # has: a ":memory:" db_path would give the migration engine and
         # self._engine two independent, unconnected in-memory databases; and
-        # ConfigParser interpolates "%" in set_main_option values, corrupting
-        # any db_path/migrations_dir containing one.
+        # ConfigParser interpolates "%" in set_main_option values; db_path no
+        # longer passes through it at all (above), and script_location is
+        # "%"-escaped ("%%" is ConfigParser's literal-percent escape) since it
+        # still goes through set_main_option.
         config = Config()
-        config.set_main_option("script_location", str(self._migrations_dir))
+        config.set_main_option(
+            "script_location", str(self._migrations_dir).replace("%", "%%")
+        )
         with self._engine.connect() as connection:
             config.attributes["connection"] = connection
             command.upgrade(config, "head")
