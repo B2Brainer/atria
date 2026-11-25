@@ -2,6 +2,11 @@
 current working directory — it determines whether conversation history is
 findable across launches (Increment 5's relaunch-persistence requirement),
 and a desktop app's cwd at launch is not guaranteed to be stable.
+
+Lives outside tests/api/ deliberately: that package's conftest.py skips the
+whole directory on non-darwin (api/composition.py wires a real
+CredentialAdapter), but api/config.py itself has no platform dependency —
+these tests must run on every CI runner, not just macOS.
 """
 
 import os
