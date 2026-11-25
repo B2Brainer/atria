@@ -5,6 +5,9 @@
 // real Python process.
 const readline = require("node:readline");
 
+if (process.env.ATRIA_TEST_EXTRA_ENV) {
+  process.stderr.write(`extra-env:${process.env.ATRIA_TEST_EXTRA_ENV}\n`);
+}
 process.stdout.write(`${JSON.stringify({ id: null, event: "ready" })}\n`);
 
 const rl = readline.createInterface({ input: process.stdin });
