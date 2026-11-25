@@ -44,19 +44,20 @@ class InteractionManagement:
     def _prepare_clean_interaction(self, request: InteractionRequest) -> InteractionRequest:
         return request.model_copy(deep=True)
 
-    def _select_provider(self, request: InteractionRequest) -> str:
+    def _select_provider(self, request: InteractionRequest) -> None:
         # Fail-fast ahead of AIProviderPort.execute(): resolve the configured
         # provider and confirm its credential is retrievable before the provider
-        # call is ever made (Increment 4 AC11/AC12). The resolved credential is
-        # not passed on to execute(): the Interfaces specification's
-        # execute(request) takes no credential parameter — AIProviderAdapter
-        # resolves it again itself via its own injected CredentialPort
-        # (Increment 4's settled credential-delivery decision).
+        # call is ever made (Increment 4 AC11/AC12). This is a validation-only
+        # check: the resolved secret is not returned or passed on to execute()
+        # (the Interfaces specification's execute(request) takes no credential
+        # parameter) — AIProviderAdapter resolves it again itself via its own
+        # injected CredentialPort (Increment 4's settled credential-delivery
+        # decision), so it never needs to flow through this method's return value.
         try:
             configuration = self._providers[request.provider_id]
         except KeyError:
             raise KeyError(f"no ProviderConfiguration registered for {request.provider_id!r}")
-        return self._credentials.get(configuration.credential_reference)
+        self._credentials.get(configuration.credential_reference)
 
     def _assemble_record(
         self, request: InteractionRequest, result: InteractionResult

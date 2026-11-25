@@ -5,6 +5,7 @@ giving deterministic, CI-safe control over each response shape this increment's
 acceptance criteria exercise.
 """
 
+import json
 import socket
 import threading
 import time
@@ -12,7 +13,11 @@ from decimal import Decimal
 
 import httpx
 import pytest
-from adapters.providers.adapter import AIProviderAdapter, ProviderResponseError
+from adapters.providers.adapter import (
+    AIProviderAdapter,
+    InsecureEndpointError,
+    ProviderResponseError,
+)
 from core.interaction.models import InteractionRequest, ProviderConfiguration
 from core.ports.credentials import CredentialPort
 
@@ -44,11 +49,11 @@ def _configurations() -> dict[str, ProviderConfiguration]:
     }
 
 
-def _request(provider_id: str = "openai") -> InteractionRequest:
+def _request(provider_id: str = "openai", model_id: str = "gpt-4o-mini") -> InteractionRequest:
     return InteractionRequest(
         input="hello",
         provider_id=provider_id,
-        model_id="gpt-4o-mini",
+        model_id=model_id,
         parameters={"temperature": 0},
     )
 
@@ -148,13 +153,33 @@ def test_execute_leaves_metrics_none_when_the_response_carries_no_usage_data():
     assert result.metrics is None
 
 
-def test_execute_leaves_metrics_none_when_the_model_has_no_pricing_entry():
+def test_execute_leaves_metrics_none_when_the_requested_model_has_no_pricing_entry():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=_success_payload(usage={"prompt_tokens": 10, "completion_tokens": 5}),
+        )
+
+    adapter = AIProviderAdapter(
+        _configurations(), _FakeCredentialPort({"openai-key": "sk-secret"}), client=_client(handler)
+    )
+
+    result = adapter.execute(_request(model_id="some-unpriced-model"))
+
+    assert result.metrics is None
+
+
+def test_execute_prices_by_the_requested_model_id_not_the_response_echoed_model():
+    # OpenAI's response often echoes a more specific, versioned model string
+    # (e.g. "gpt-4o-mini-2024-07-18") that would never match a pricing-table
+    # entry keyed by the configured alias — pricing must key off what was
+    # REQUESTED, not what the response happened to echo back.
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
             json=_success_payload(
-                model="some-unpriced-model",
-                usage={"prompt_tokens": 10, "completion_tokens": 5},
+                model="gpt-4o-mini-2024-07-18",
+                usage={"prompt_tokens": 1_000_000, "completion_tokens": 500_000},
             ),
         )
 
@@ -162,9 +187,10 @@ def test_execute_leaves_metrics_none_when_the_model_has_no_pricing_entry():
         _configurations(), _FakeCredentialPort({"openai-key": "sk-secret"}), client=_client(handler)
     )
 
-    result = adapter.execute(_request())
+    result = adapter.execute(_request(model_id="gpt-4o-mini"))
 
-    assert result.metrics is None
+    assert result.metrics is not None
+    assert result.metrics.cost == Decimal("0.15") + Decimal("0.60") * Decimal("0.5")
 
 
 def test_execute_raises_on_a_non_2xx_response():
@@ -211,6 +237,26 @@ def test_execute_raises_on_a_network_level_failure():
         adapter.execute(_request())
 
 
+def test_network_failure_exception_carries_no_chained_request_with_the_credential():
+    # httpx sets `.request` (headers included) on its own exceptions once a
+    # request is in flight. Chaining that exception (via `from exc`, or
+    # implicitly via __context__) would carry the Bearer credential reachable
+    # from the raised ProviderResponseError's exception chain, not just its
+    # message — this proves neither __cause__ nor __context__ carries it.
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    adapter = AIProviderAdapter(
+        _configurations(), _FakeCredentialPort({"openai-key": "sk-secret"}), client=_client(handler)
+    )
+
+    with pytest.raises(ProviderResponseError) as excinfo:
+        adapter.execute(_request())
+
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None
+
+
 def test_execute_raises_when_the_response_body_cannot_be_parsed():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, text="not json")
@@ -255,6 +301,66 @@ def test_credential_appears_in_the_request_header_and_not_in_the_body():
     assert b"sk-secret" not in sent.content
 
 
+def test_execute_raises_and_issues_no_request_for_a_non_https_endpoint():
+    requests_seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests_seen.append(request)
+        return httpx.Response(200, json=_success_payload())
+
+    configurations = {
+        "openai": ProviderConfiguration(
+            provider_id="openai",
+            endpoint="http://provider.invalid/v1/complete",
+            credential_reference="openai-key",
+        )
+    }
+    adapter = AIProviderAdapter(
+        configurations, _FakeCredentialPort({"openai-key": "sk-secret"}), client=_client(handler)
+    )
+
+    with pytest.raises(InsecureEndpointError):
+        adapter.execute(_request())
+
+    assert requests_seen == []
+
+
+def test_execute_ignores_a_parameters_entry_that_tries_to_override_model_or_messages():
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["request"] = request
+        return httpx.Response(200, json=_success_payload())
+
+    adapter = AIProviderAdapter(
+        _configurations(), _FakeCredentialPort({"openai-key": "sk-secret"}), client=_client(handler)
+    )
+    request = InteractionRequest(
+        input="hello",
+        provider_id="openai",
+        model_id="gpt-4o-mini",
+        parameters={"model": "some-other-model", "messages": [{"role": "system", "content": "x"}]},
+    )
+
+    adapter.execute(request)
+
+    sent_body = json.loads(captured["request"].content)
+    assert sent_body["model"] == "gpt-4o-mini"
+    assert sent_body["messages"] == [{"role": "user", "content": "hello"}]
+
+
+def test_execute_raises_when_the_response_content_is_not_a_string():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_success_payload(choices=[{"message": {"content": None}}]))
+
+    adapter = AIProviderAdapter(
+        _configurations(), _FakeCredentialPort({"openai-key": "sk-secret"}), client=_client(handler)
+    )
+
+    with pytest.raises(ProviderResponseError):
+        adapter.execute(_request())
+
+
 def test_send_request_timeout_is_actually_enforced_against_a_stalling_server():
     # test_send_request_never_disables_tls_verification_and_sets_an_explicit_timeout
     # only proves the timeout value is stored; MockTransport never simulates a
@@ -289,6 +395,7 @@ def test_send_request_timeout_is_actually_enforced_against_a_stalling_server():
             configurations,
             _FakeCredentialPort({"openai-key": "sk-secret"}),
             timeout=0.2,
+            require_https=False,  # local plain-TCP loopback stub only; never do this in production
         )
 
         start = time.monotonic()
