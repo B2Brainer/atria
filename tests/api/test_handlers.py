@@ -12,9 +12,19 @@ if sys.platform != "darwin":
         allow_module_level=True,
     )
 
+from api.handlers import dispatch_table
 from api.rpc import RpcDispatcher
 from core.interaction.models import ExecutionMetrics, InteractionResult
 from tests.fakes import FakeAIProviderPort
+
+
+def test_dispatch_table_covers_exactly_the_seven_operations(handlers):
+    from api.handlers import OPERATIONS
+
+    table = dispatch_table(handlers)
+
+    assert set(table.keys()) == set(OPERATIONS)
+    assert all(callable(fn) for fn in table.values())
 
 
 def test_composition_wires_real_adapters(composition):
@@ -153,17 +163,7 @@ SECRET = "test-wire-inspection-secret-value"
 
 
 def _dispatch_over_the_wire(handlers) -> RpcDispatcher:
-    return RpcDispatcher(
-        {
-            "initiate": handlers.initiate,
-            "get": handlers.get,
-            "list_by_cycle": handlers.list_by_cycle,
-            "list_cycles": handlers.list_cycles,
-            "set_credential": handlers.set_credential,
-            "get_credential_status": handlers.get_credential_status,
-            "remove_credential": handlers.remove_credential,
-        }
-    )
+    return RpcDispatcher(dispatch_table(handlers))
 
 
 def test_full_credentialed_initiate_round_trip_never_puts_the_secret_on_the_wire(

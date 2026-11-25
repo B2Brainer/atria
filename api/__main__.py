@@ -12,7 +12,7 @@ import logging
 import sys
 
 from api.composition import Composition
-from api.handlers import Handlers
+from api.handlers import Handlers, dispatch_table
 from api.rpc import RpcDispatcher, serve
 
 
@@ -25,17 +25,7 @@ def main() -> None:
 
     composition = Composition()
     handlers = Handlers(composition)
-    dispatcher = RpcDispatcher(
-        {
-            "initiate": handlers.initiate,
-            "get": handlers.get,
-            "list_by_cycle": handlers.list_by_cycle,
-            "list_cycles": handlers.list_cycles,
-            "set_credential": handlers.set_credential,
-            "get_credential_status": handlers.get_credential_status,
-            "remove_credential": handlers.remove_credential,
-        }
-    )
+    dispatcher = RpcDispatcher(dispatch_table(handlers))
     serve(dispatcher, sys.stdin, sys.stdout)
 
 

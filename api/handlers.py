@@ -99,3 +99,11 @@ OPERATIONS = (
     "get_credential_status",
     "remove_credential",
 )
+
+
+def dispatch_table(handlers: Handlers) -> dict[str, object]:
+    # The single source of truth for "which bound method answers which RPC
+    # method name" — OPERATIONS alone, never a second, independently
+    # maintained literal (api/__main__.py and tests previously each kept
+    # their own copy, which could silently drift from this list).
+    return {name: getattr(handlers, name) for name in OPERATIONS}
