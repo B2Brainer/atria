@@ -7,6 +7,8 @@ dependencies = [
     "pydantic>=2.9,<3",
     "httpx>=0.27,<1",
     "sqlalchemy>=2.0,<3",
+    "alembic>=1.13,<2",
+    "pyobjc-framework-Security>=10.3,<12; sys_platform == 'darwin'",
 ]
 
 [dependency-groups]
