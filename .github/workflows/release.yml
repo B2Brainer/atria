@@ -32,13 +32,41 @@ jobs:
 
       - run: npm ci
 
+      - name: Determine whether this build is fully signed and notarized
+        id: creds
+        env:
+          # A plain `run:` step's `env:` block is the uncontroversial way to
+          # read secrets (unlike referencing `secrets.*` directly inside a
+          # step `if:` condition) -- this one step is the single place that
+          # decides "is this a real, Gatekeeper-installable release
+          # artifact", so every later step reads its output, never
+          # `secrets.*` itself.
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          # Signing alone produces a Developer-ID-signed artifact that
+          # Gatekeeper still blocks without notarization -- only when BOTH
+          # signing AND notarization credentials are present is the result a
+          # real release artifact; any partial set still publishes as an
+          # unsigned/development build, never silently as a signed-but-
+          # unnotarized "release".
+          if [ -n "$CSC_LINK" ] && [ -n "$CSC_KEY_PASSWORD" ] && [ -n "$APPLE_ID" ] \
+            && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+            echo "fully_signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "fully_signed=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build and package (unsigned, when no Apple credentials are configured)
         env:
           # electron-builder's standard signing env vars. Their absence does
           # not fail this step — electron-builder falls back to an unsigned
           # artifact (see electron-builder.yml); notarize.cjs's afterSign
           # hook similarly skips without APPLE_ID/APPLE_APP_SPECIFIC_PASSWORD/
-          # APPLE_TEAM_ID. All four are optional repository secrets, added
+          # APPLE_TEAM_ID. All five are optional repository secrets, added
           # only once real Apple Developer Program credentials exist.
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
@@ -47,8 +75,8 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: npm run package:mac
 
-      - name: Label unsigned artifacts as development builds
-        if: ${{ secrets.CSC_LINK == '' }}
+      - name: Label unsigned/unnotarized artifacts as development builds
+        if: ${{ steps.creds.outputs.fully_signed != 'true' }}
         working-directory: desktop/dist
         run: |
           for f in *.dmg *.zip; do
@@ -58,7 +86,7 @@ jobs:
 
       - uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7785e276c # v2
         with:
-          draft: ${{ secrets.CSC_LINK == '' }}
+          draft: ${{ steps.creds.outputs.fully_signed != 'true' }}
           files: |
             desktop/dist/*.dmg
             desktop/dist/*.zip

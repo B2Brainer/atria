@@ -16,9 +16,16 @@ exports.default = async function notarizeHook(context) {
   const teamId = process.env.APPLE_TEAM_ID;
 
   if (!appleId || !applePassword || !teamId) {
+    // Not "unsigned": this artifact may still be code-signed (CSC_LINK/
+    // CSC_KEY_PASSWORD) — just not notarized, which Gatekeeper still
+    // requires to install without a manual override. The release
+    // workflow's own `fully_signed` check (release.yml) is what decides
+    // the publish-time label/draft status from the complete credential
+    // set, not this log line.
     console.log(
       "[notarize] APPLE_ID/APPLE_APP_SPECIFIC_PASSWORD/APPLE_TEAM_ID not set — " +
-        "skipping notarization; this build's artifact is unsigned/development-only.",
+        "skipping notarization; this build's artifact is not notarized " +
+        "(Gatekeeper will not treat it as a trusted release artifact).",
     );
     return;
   }
