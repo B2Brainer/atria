@@ -15,7 +15,7 @@ from alembic import command
 from alembic.config import Config
 from core.ports.persistence import PersistencePort
 from core.records.models import InteractionRecord
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
@@ -100,3 +100,18 @@ class PersistenceAdapter(PersistencePort):
                 )
             ).scalars()
             return [self._deserialize_record(row.payload) for row in rows]
+
+    def list_cycles(self) -> list[UUID]:
+        # No stored column carries a record's creation time (it lives inside
+        # the JSON payload), so "most recent activity" is approximated by
+        # SQLite's own implicit rowid, which increases monotonically with
+        # insertion order — avoiding a schema change or deserializing every
+        # row just to sort cycles.
+        with Session(self._engine) as session:
+            rows = session.execute(
+                text(
+                    "SELECT cycle_id FROM interaction_records "
+                    "GROUP BY cycle_id ORDER BY MAX(rowid) DESC"
+                )
+            )
+            return [UUID(row[0]) for row in rows]

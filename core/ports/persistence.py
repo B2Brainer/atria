@@ -22,3 +22,7 @@ class PersistencePort(ABC):
     @abstractmethod
     def list_by_cycle(self, cycle_id: UUID) -> list[InteractionRecord]:
         raise NotImplementedError
+
+    @abstractmethod
+    def list_cycles(self) -> list[UUID]:
+        raise NotImplementedError

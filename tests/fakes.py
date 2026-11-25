@@ -24,6 +24,13 @@ class FakePersistencePort(PersistencePort):
     def list_by_cycle(self, cycle_id: UUID) -> list[InteractionRecord]:
         return [record for record in self._records.values() if record.cycle_id == cycle_id]
 
+    def list_cycles(self) -> list[UUID]:
+        seen: list[UUID] = []
+        for record in reversed(list(self._records.values())):
+            if record.cycle_id not in seen:
+                seen.append(record.cycle_id)
+        return seen
+
 
 class FakeAIProviderPort(AIProviderPort):
     def __init__(self, result: InteractionResult, call_log: list[str] | None = None) -> None:

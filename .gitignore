@@ -9,8 +9,12 @@ __pycache__/
 # TypeScript / Node
 node_modules/
 dist/
+out/
 .vite/
 coverage/
+
+# Local runtime data (Increment 5: api/'s default SQLite path, when run from repo root)
+/atria.sqlite3
 
 # Secrets
 .env

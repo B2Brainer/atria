@@ -40,5 +40,10 @@ def test_credential_port_requires_all_methods():
 
 def test_ports_expose_established_methods():
     assert set(AIProviderPort.__abstractmethods__) == {"execute"}
-    assert set(PersistencePort.__abstractmethods__) == {"save", "get", "list_by_cycle"}
+    assert set(PersistencePort.__abstractmethods__) == {
+        "save",
+        "get",
+        "list_by_cycle",
+        "list_cycles",
+    }
     assert set(CredentialPort.__abstractmethods__) == {"get", "store", "delete"}

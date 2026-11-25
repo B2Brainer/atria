@@ -214,6 +214,22 @@ def downgrade() -> None:
     assert second.get(record.id) == record
 
 
+def test_list_cycles_returns_distinct_cycles_ordered_by_most_recent_activity(adapter):
+    cycle_a, cycle_b, cycle_c = uuid4(), uuid4(), uuid4()
+    adapter.save(InteractionRecord(cycle_id=cycle_a, sequence=1, request=_request()))
+    adapter.save(InteractionRecord(cycle_id=cycle_b, sequence=1, request=_request()))
+    adapter.save(InteractionRecord(cycle_id=cycle_b, sequence=2, request=_request()))
+    adapter.save(InteractionRecord(cycle_id=cycle_c, sequence=1, request=_request()))
+
+    cycles = adapter.list_cycles()
+
+    assert cycles == [cycle_c, cycle_b, cycle_a]
+
+
+def test_list_cycles_returns_empty_list_for_empty_database(adapter):
+    assert adapter.list_cycles() == []
+
+
 def test_fresh_database_can_apply_a_second_migration_in_sequence(tmp_path):
     migrations_root = tmp_path / "migrations_seq"
     migrations_root.mkdir()

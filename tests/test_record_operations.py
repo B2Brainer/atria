@@ -73,6 +73,16 @@ def test_assign_sequence_is_strictly_increasing_within_a_cycle():
     assert third_sequence == 3
 
 
+def test_list_cycles_delegates_to_persistence_port():
+    persistence = FakePersistencePort()
+    records = InteractionRecordManagement(persistence)
+    cycle_a, cycle_b = uuid4(), uuid4()
+    persistence.save(InteractionRecord(cycle_id=cycle_a, sequence=1, request=_request()))
+    persistence.save(InteractionRecord(cycle_id=cycle_b, sequence=1, request=_request()))
+
+    assert set(records.list_cycles()) == {cycle_a, cycle_b}
+
+
 def test_assign_sequence_is_scoped_per_cycle():
     persistence = FakePersistencePort()
     records = InteractionRecordManagement(persistence)
