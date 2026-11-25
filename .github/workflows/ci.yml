@@ -42,15 +42,17 @@ jobs:
       - run: npm run test
       - run: npm run lint
 
-  # Packaged-artifact smoke test (Increment 6 AC1/AC3): the two jobs above
-  # only ever exercise source code on ubuntu-latest — electron-builder's
-  # `--mac` target, and the packaged resourcesPath/symlink resolution it
-  # depends on, cannot be produced or launched there. That gap is why four
-  # separate commits (bd3286c, 1085543, 09e940f, 3c9b2a4) were needed to
-  # reactively fix packaged-path bugs after merge instead of catching them
-  # in one CI run. This job builds the real unsigned macOS artifact and
-  # launches it, verifying the bundled Python backend actually starts from
-  # its packaged location.
+  # Packaged-artifact smoke test: the two jobs above only ever exercise
+  # source code on ubuntu-latest — electron-builder's `--mac` target, and
+  # the packaged resourcesPath/symlink resolution it depends on, cannot be
+  # produced or launched there. That gap is why four separate commits
+  # (bd3286c, 1085543, 09e940f, 3c9b2a4) were needed to reactively fix
+  # packaged-path bugs after Increment 6 merged instead of catching them in
+  # one CI run. This job mirrors Increment 6's AC1/AC3 verification intent
+  # as a standalone, ongoing CI gate (added after that increment shipped,
+  # not part of its original spec): it builds the real unsigned macOS
+  # artifact and launches it, verifying the bundled Python backend actually
+  # starts from its packaged location.
   desktop-package-smoke:
     name: Desktop package smoke test (macOS)
     runs-on: macos-latest
@@ -58,8 +60,9 @@ jobs:
       run:
         working-directory: desktop
     env:
-      # Forces the unsigned/development fallback path (AC3) — no Apple
-      # Developer credentials are available or required here.
+      # Forces the unsigned/development fallback path (mirrors Increment 6
+      # AC3's intent) — no Apple Developer credentials are available or
+      # required here.
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -94,18 +97,33 @@ jobs:
           rm -f "$BACKEND_LOG" "$MAIN_LOG"
           "$APP_PATH/Contents/MacOS/Atria" >/tmp/atria-stdout.log 2>&1 &
           APP_PID=$!
+          # A non-empty backend log alone is not a readiness signal: the
+          # backend's own JSON log file is also where a startup error is
+          # recorded (api/logging_config.py), and a crashed process exits
+          # the moment index.ts's startBackend() catch calls app.exit(1)
+          # (desktop/src/main/index.ts). Readiness is the log appearing
+          # WHILE the app process is still alive — a log that only appears
+          # after the process has already exited is a captured failure,
+          # not a success.
           READY=false
           for _ in $(seq 1 30); do
+            if ! kill -0 "$APP_PID" 2>/dev/null; then
+              break
+            fi
             if [ -s "$BACKEND_LOG" ]; then
               READY=true
               break
             fi
-            if ! kill -0 "$APP_PID" 2>/dev/null; then
-              break
-            fi
             sleep 1
           done
+          # Bound the shutdown wait: an app that ignores SIGTERM must never
+          # be able to hang this job until the runner's own hard timeout.
           kill "$APP_PID" 2>/dev/null || true
+          for _ in $(seq 1 5); do
+            kill -0 "$APP_PID" 2>/dev/null || break
+            sleep 1
+          done
+          kill -9 "$APP_PID" 2>/dev/null || true
           wait "$APP_PID" 2>/dev/null || true
           echo "===== main process log ====="
           cat "$MAIN_LOG" 2>/dev/null || echo "(no main log produced)"
@@ -114,6 +132,6 @@ jobs:
           echo "===== captured stdout/stderr ====="
           cat /tmp/atria-stdout.log || true
           if [ "$READY" != true ]; then
-            echo "error: packaged backend never produced a log record — it did not reach readiness (packaged resourcesPath/python-dist resolution likely broken)" >&2
+            echo "error: packaged backend never produced a log record while the app process was still running — it did not reach readiness (packaged resourcesPath/python-dist resolution likely broken, or the process crashed on startup)" >&2
             exit 1
           fi
