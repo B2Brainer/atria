@@ -18,6 +18,10 @@ const crashThenNeverReadyFixturePath = path.join(
   fixturesDir,
   "crash-then-never-ready-backend.cjs",
 );
+const crashThenSlowRestartFixturePath = path.join(
+  fixturesDir,
+  "crash-then-slow-restart-backend.cjs",
+);
 
 let client: BackendClient | null = null;
 
@@ -63,6 +67,38 @@ describe("BackendClient", () => {
 
     const result = await client.call<string>("echo", { value: "still-alive" });
     expect(result).toBe("still-alive");
+  });
+
+  it("call() waits for a restart attempt's own readiness instead of proceeding against it immediately", async () => {
+    // Regression: onProcessFailure reassigns this.ready synchronously when
+    // it restarts — a call() issued right after the crash (not waiting on
+    // the earlier "give it a tick" pattern above) must wait for the NEW
+    // attempt's own readiness, not just swallow the old attempt's
+    // rejection and proceed against a replacement that isn't ready yet.
+    const markerDir = mkdtempSync(path.join(tmpdir(), "atria-slow-restart-marker-"));
+    const markerPath = path.join(markerDir, "spawned");
+    const previousMarker = process.env.ATRIA_TEST_RESTART_MARKER;
+    process.env.ATRIA_TEST_RESTART_MARKER = markerPath;
+
+    try {
+      client = new BackendClient("node", [crashThenSlowRestartFixturePath], process.cwd());
+      await client.start();
+      await client.call("crash").catch(() => undefined);
+
+      // No "give it a tick" wait here, deliberately: this call is issued
+      // immediately after the crash, while the restart (which takes
+      // ~150ms to become ready) is still in flight.
+      const start = Date.now();
+      const result = await client.call<string>("echo", { value: "after-restart" });
+      const elapsed = Date.now() - start;
+
+      expect(result).toBe("after-restart");
+      expect(elapsed).toBeGreaterThanOrEqual(100);
+    } finally {
+      if (previousMarker === undefined) delete process.env.ATRIA_TEST_RESTART_MARKER;
+      else process.env.ATRIA_TEST_RESTART_MARKER = previousMarker;
+      rmSync(markerDir, { recursive: true, force: true });
+    }
   });
 
   it("gives up restarting after the bounded attempt limit is exhausted", async () => {

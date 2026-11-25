@@ -162,7 +162,12 @@ export class BackendClient {
         // stop() already owns an orderly SIGTERM-then-timeout-then-SIGKILL
         // teardown of this exact child; escalating straight to SIGKILL
         // here (e.g. on a stdin error racing stop()'s own SIGTERM) would
-        // cut that short instead of letting it finish gracefully.
+        // cut that short instead of letting it finish gracefully. Still
+        // mark unavailable: no replacement is coming during a shutdown, so
+        // a call() racing this failure (registering a pending entry after
+        // rejectAllPending() above already ran) must still refuse instead
+        // of hanging on a reply that will never arrive.
+        this.unavailable = true;
         return;
       }
       if (child.exitCode === null && child.signalCode === null) {
@@ -243,7 +248,19 @@ export class BackendClient {
   }
 
   async call<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-    await this.ready.catch(() => undefined);
+    // A failed attempt's own rejection can itself trigger a replacement
+    // spawn (onProcessFailure reassigns this.ready synchronously, before
+    // this await's continuation runs) — catching once and proceeding would
+    // let call() write to that replacement before IT has reached
+    // readiness. Keep following this.ready until it settles successfully,
+    // stops changing (no further replacement is coming), or unavailable is
+    // set (a terminal failure, chased no further).
+    let pendingReady = this.ready;
+    for (;;) {
+      await pendingReady.catch(() => undefined);
+      if (this.unavailable || this.ready === pendingReady) break;
+      pendingReady = this.ready;
+    }
     if (this.unavailable) {
       throw new BackendUnavailableError("backend process is not running");
     }
