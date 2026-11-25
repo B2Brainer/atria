@@ -104,7 +104,15 @@ def test_credential_operation_exceptions_are_redacted_not_passed_through(caplog)
     # method(**params), so a different parameter name would raise a
     # TypeError that this test's generic exception handling would then
     # mask entirely, never exercising the intended leaky-secret path.
+    # calls records each invocation's actual arguments: a positive
+    # assertion that the leaky handler itself ran with the right secret,
+    # not just a TypeError from a keyword-binding break that this
+    # dispatcher's generic exception handling would otherwise mask
+    # identically (exactly the regression 132cb3b introduced).
+    calls: list[tuple[str, str]] = []
+
     def leaky_set_credential(provider_id: str, secret: str) -> None:
+        calls.append((provider_id, secret))
         raise RuntimeError(f"failed storing {secret!r} for {provider_id!r}")
 
     dispatcher = RpcDispatcher({"set_credential": leaky_set_credential})
@@ -119,6 +127,7 @@ def test_credential_operation_exceptions_are_redacted_not_passed_through(caplog)
             }
         )
 
+    assert calls == [("openai", secret_value)]
     assert secret_value not in json.dumps(response)
     assert response["error"]["message"] == "credential operation failed"
     assert len(caplog.records) == 1  # a record WAS emitted — not just secret-free if present
