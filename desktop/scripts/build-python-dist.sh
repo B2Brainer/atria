@@ -107,16 +107,21 @@ echo "==> Ad-hoc signing the bundled runtime's executables and native extensions
 # compiled extension modules pip installs into it (notably
 # pyobjc-framework-security's .so bridge), ship with none at all ("code
 # object is not signed at all" per `codesign -dv`) -- confirmed on this
-# build. On Intel this is silently tolerated; on arm64 it is not: the
-# packaged backend process is killed by the kernel immediately after it
-# starts loading such code, with no exit code and no Python traceback to
-# explain why (this is what the desktop-package-smoke CI job's first real
-# run on a macOS arm64 runner caught). electron-builder's own app signing
-# does not reach into extraResources, so this runtime must sign itself.
-# A plain ad-hoc signature (no identity, no entitlements) is sufficient --
-# this is independent of, and does not require, the outer .app's own
-# signing/hardened-runtime configuration.
-find "$PYTHON_DIST_DIR" \( -name '*.so' -o -name '*.dylib' \) -print0 \
+# build. electron-builder's own app signing does not reach into
+# extraResources, so this runtime must sign itself regardless of the
+# outer .app's own signing/hardened-runtime configuration.
+#
+# HYPOTHESIS, not yet confirmed: that this unsigned state is what gets the
+# packaged backend process killed by the OS on a real arm64 machine (the
+# desktop-package-smoke CI job's first run, on macOS arm64, saw the
+# process die with no exit code and no Python traceback right after
+# completing its Alembic migrations -- consistent with, but not proof of,
+# a code-signing-related kill partway through startup). This machine is
+# Intel/x86_64, which does not enforce arm64's mandatory signing, so this
+# fix could not be verified end-to-end here -- only that signing does not
+# break the runtime (it still imports and reaches readiness afterward).
+# The next CI run on the real arm64 runner is the actual verification.
+find "$PYTHON_DIST_DIR" -type f \( -name '*.so' -o -name '*.dylib' \) -print0 \
   | xargs -0 -I{} codesign --force --sign - "{}"
 find "$PYTHON_DIST_DIR/bin" -type f -perm -u+x -print0 \
   | xargs -0 -I{} codesign --force --sign - "{}"

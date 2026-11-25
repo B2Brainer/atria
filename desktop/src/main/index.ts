@@ -124,6 +124,13 @@ async function startBackend(): Promise<void> {
   );
   await backend.start();
   registerIpcHandlers(backend);
+  // The backend's own "ready" RPC event is consumed internally by
+  // BackendClient.start() (it resolves this await) and never reaches any
+  // log — there was previously no externally observable signal that
+  // startup actually succeeded, as opposed to merely not having crashed
+  // yet. A log consumer (a packaging smoke test, an operator reading
+  // atria-main.log) can rely on this exact line.
+  logger.info("backend reached readiness");
 }
 
 app.whenReady().then(async () => {

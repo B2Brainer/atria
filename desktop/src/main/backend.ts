@@ -207,9 +207,10 @@ export class BackendClient {
     child.on("exit", (code, signal) => {
       if (child !== this.process) return;
       // A null code with a non-null signal means the OS terminated the
-      // process (e.g. SIGKILL from a hardened-runtime/library-validation
-      // refusal on macOS) rather than the process exiting on its own —
-      // worth distinguishing from an ordinary non-zero exit code.
+      // process (e.g. a SIGKILL from an out-of-memory condition or a
+      // macOS code-signing/execution policy refusal) rather than the
+      // process exiting on its own — worth distinguishing from an
+      // ordinary non-zero exit code.
       this.onLog(
         `backend process exited (code ${code ?? "unknown"}${signal ? `, signal ${signal}` : ""})`,
       );
