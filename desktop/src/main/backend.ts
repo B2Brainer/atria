@@ -7,7 +7,7 @@ import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
 const MAX_RESTART_ATTEMPTS = 3;
-const READY_TIMEOUT_MS = 10_000;
+const DEFAULT_READY_TIMEOUT_MS = 10_000;
 const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 5_000;
 
 interface PendingCall {
@@ -38,6 +38,10 @@ export class BackendClient {
     private readonly args: string[],
     private readonly cwd: string,
     private readonly onLog: (line: string) => void = () => {},
+    // Test-only override: a fixture that deliberately never becomes ready
+    // needs a short bound, not the real 10s default, to exercise the
+    // readiness-rejection path in a reasonable test runtime.
+    private readonly readyTimeoutMs: number = DEFAULT_READY_TIMEOUT_MS,
   ) {}
 
   async start(): Promise<void> {
@@ -57,6 +61,13 @@ export class BackendClient {
     promise.catch(() => {});
   }
 
+  private rejectAllPending(error: Error): void {
+    for (const pending of this.pending.values()) {
+      pending.reject(error);
+    }
+    this.pending.clear();
+  }
+
   private spawnAndWaitReady(): Promise<void> {
     const child = spawn(this.command, this.args, { cwd: this.cwd });
     this.process = child;
@@ -65,12 +76,24 @@ export class BackendClient {
     const stderrLines = createInterface({ input: child.stderr });
     stderrLines.on("line", (line) => this.onLog(line));
 
+    let settleReady: ((error: Error | null) => void) | null = null;
+
     const readyPromise = new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
-        reject(new BackendUnavailableError("backend did not report readiness in time"));
-      }, READY_TIMEOUT_MS);
+        settleReady?.(new BackendUnavailableError("backend did not report readiness in time"));
+      }, this.readyTimeoutMs);
 
-      let resolvedReady = false;
+      // The single settlement path every readiness outcome funnels through
+      // (the ready line, the timeout, a spawn/stdio 'error' event) — so
+      // whichever fires first wins and every later one is a no-op, instead
+      // of each needing its own "did I already settle?" guard.
+      settleReady = (error) => {
+        settleReady = null;
+        clearTimeout(timeout);
+        if (error) reject(error);
+        else resolve();
+      };
+
       stdoutLines.on("line", (line) => {
         let message: RpcMessage;
         try {
@@ -79,10 +102,8 @@ export class BackendClient {
           this.onLog(`malformed backend stdout line: ${line}`);
           return;
         }
-        if (!resolvedReady && message.event === "ready") {
-          resolvedReady = true;
-          clearTimeout(timeout);
-          resolve();
+        if (settleReady && message.event === "ready") {
+          settleReady(null);
           return;
         }
         this.handleMessage(message);
@@ -95,13 +116,27 @@ export class BackendClient {
     });
 
     // Without this listener, a failed spawn (the command not found, a bad
-    // ATRIA_PYTHON override) or a write to a child that already exited
-    // (EPIPE) emits an uncaught 'error' event on the ChildProcess, which
-    // crashes the whole Electron main process rather than surfacing as a
-    // normal BackendUnavailableError. 'exit' still fires after 'error' for a
-    // failed spawn, so handleExit()'s rejection/restart logic still runs.
+    // ATRIA_PYTHON override) emits an uncaught 'error' event on the
+    // ChildProcess, which crashes the whole Electron main process rather
+    // than surfacing as a normal BackendUnavailableError. A failed spawn is
+    // not guaranteed to also emit 'exit' on every platform/Node version, so
+    // this settles (rejects) readiness directly here rather than relying
+    // solely on 'exit' -> handleExit() to eventually notice.
     child.on("error", (err) => {
       this.onLog(`backend process error: ${err.message}`);
+      settleReady?.(new BackendUnavailableError(`backend process error: ${err.message}`));
+    });
+
+    // child.on("error") does NOT receive errors from the stdin stream
+    // itself (e.g. EPIPE writing to an already-exited process) — those are
+    // a separate EventEmitter with their own 'error' event, uncaught by
+    // default. A write failure can't be attributed to one specific pending
+    // call, so every call currently awaiting a response is rejected.
+    child.stdin.on("error", (err) => {
+      this.onLog(`backend stdin error: ${err.message}`);
+      this.rejectAllPending(
+        new BackendUnavailableError(`backend stdin error: ${err.message}`),
+      );
     });
 
     return readyPromise;
@@ -120,11 +155,9 @@ export class BackendClient {
   }
 
   private handleExit(): void {
-    const error = new BackendUnavailableError("backend process exited while a request was pending");
-    for (const pending of this.pending.values()) {
-      pending.reject(error);
-    }
-    this.pending.clear();
+    this.rejectAllPending(
+      new BackendUnavailableError("backend process exited while a request was pending"),
+    );
 
     if (this.shuttingDown) return;
 

@@ -9,10 +9,9 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { BackendClient, BackendUnavailableError } from "./backend";
 
-const fixturePath = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "__fixtures__/fake-backend.cjs",
-);
+const fixturesDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "__fixtures__");
+const fixturePath = path.join(fixturesDir, "fake-backend.cjs");
+const neverReadyFixturePath = path.join(fixturesDir, "never-ready-backend.cjs");
 
 let client: BackendClient | null = null;
 
@@ -75,9 +74,56 @@ describe("BackendClient", () => {
   });
 
   it("a readiness failure never surfaces as an unhandled promise rejection", async () => {
-    // Regression: a restart's spawnAndWaitReady() rejection, with no
-    // in-flight call() awaiting it, must not be an unhandled rejection —
-    // Node terminates the process on one by default.
+    // Regression: a readiness rejection (here, a genuine timeout — the
+    // fixture never emits "ready") with no in-flight call() awaiting it
+    // must not be an unhandled rejection — Node terminates the process on
+    // one by default. A short readyTimeoutMs keeps this fast instead of
+    // waiting the real 10s default.
+    const unhandled: unknown[] = [];
+    const onUnhandledRejection = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandledRejection);
+
+    try {
+      client = new BackendClient(
+        "node",
+        [neverReadyFixturePath],
+        process.cwd(),
+        () => {},
+        50,
+      );
+      // Deliberately not awaited: this is exactly the "nothing is awaiting
+      // this readiness promise yet" scenario the fix protects against.
+      void client.start().catch(() => undefined);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+    }
+
+    expect(unhandled).toEqual([]);
+  });
+
+  it("rejects start() promptly (not after the full readiness timeout) when the spawn fails", async () => {
+    // Regression: before the child.on("error", ...) handler settled
+    // readiness directly, a failed spawn (ENOENT) relied solely on 'exit'
+    // firing to notice — not guaranteed on every platform/Node version —
+    // and even then, a misleading "did not report readiness in time" only
+    // surfaced after the full (here, 10s) timeout.
+    const logs: string[] = [];
+    client = new BackendClient("this-command-does-not-exist", [], process.cwd(), (line) =>
+      logs.push(line),
+    );
+
+    await expect(client.start()).rejects.toThrow(/backend process error/);
+
+    expect(logs.some((line) => line.includes("backend process error"))).toBe(true);
+  });
+
+  it("a stdin write failure rejects pending calls instead of crashing the process", async () => {
+    // Regression: child.on("error", ...) alone does not receive errors from
+    // the stdin stream itself — a write to an already-destroyed stdin
+    // (the real EPIPE race: the process exits between call()'s liveness
+    // check and its synchronous write) emits its own uncaught 'error'
+    // unless stdin has its own listener.
     const unhandled: unknown[] = [];
     const onUnhandledRejection = (reason: unknown) => unhandled.push(reason);
     process.on("unhandledRejection", onUnhandledRejection);
@@ -86,32 +132,19 @@ describe("BackendClient", () => {
       client = new BackendClient("node", [fixturePath], process.cwd());
       await client.start();
 
-      // Crash without a pending call racing it, so nothing awaits this
-      // restart's readiness promise until the test's own assertion below.
-      await client.call("crash").catch(() => undefined);
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      const pendingCall = client.call("echo", { value: "x" });
+      // Reach past the public API to force the exact race a liveness check
+      // can't fully close: the stream itself fails after the call believed
+      // the process alive.
+      (client as unknown as { process: { stdin: { destroy(): void } } }).process.stdin.destroy();
+
+      await expect(pendingCall).rejects.toThrow(BackendUnavailableError);
+      await new Promise((resolve) => setTimeout(resolve, 100));
     } finally {
       process.off("unhandledRejection", onUnhandledRejection);
     }
 
     expect(unhandled).toEqual([]);
-  });
-
-  it("a failed spawn's 'error' event does not crash the process", async () => {
-    // Regression: before the child.on("error", ...) listener was added, an
-    // ENOENT spawn (a bad command) emitted an uncaught 'error' event on the
-    // ChildProcess with no listener, which Node re-throws, crashing the
-    // whole process. This only asserts the event is observed, not the full
-    // (slower, READY_TIMEOUT_MS-bounded) start() rejection.
-    const logs: string[] = [];
-    client = new BackendClient("this-command-does-not-exist", [], process.cwd(), (line) =>
-      logs.push(line),
-    );
-    void client.start().catch(() => undefined);
-
-    await new Promise((resolve) => setTimeout(resolve, 300));
-
-    expect(logs.some((line) => line.includes("backend process error"))).toBe(true);
   });
 
   it("stop() terminates the child process and leaves no orphan", async () => {
