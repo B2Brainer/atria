@@ -50,6 +50,10 @@ app.whenReady().then(async () => {
     // Without this catch, a failed startBackend() (spawn failure, readiness
     // timeout) is an unhandled promise rejection: no window ever opens, the
     // user sees nothing, and the process is left in an ambiguous state.
+    // backend may have partially started (a child process spawned but
+    // never reached readiness) — stop() is a no-op if it didn't, and
+    // guarantees no orphan if it did, before this process exits.
+    await backend?.stop();
     dialog.showErrorBox(
       "Atria failed to start",
       `The application backend could not be started: ${(err as Error).message}`,
