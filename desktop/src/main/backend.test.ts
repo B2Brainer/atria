@@ -167,6 +167,19 @@ describe("BackendClient", () => {
     expect(logs.some((line) => line.includes("restarting backend"))).toBe(false);
   });
 
+  it("call() rejects after a failed first start(), rather than proceeding against a dead child", async () => {
+    // Regression: a prior fix made `await this.ready` swallow its own
+    // rejection (`.catch(() => undefined)`), relying solely on
+    // exitCode/signalCode to catch this in call() — but a child that never
+    // actually spawned (this fixture never becomes ready, which here is
+    // the same "no real process" shape as an ENOENT spawn) may leave both
+    // null, so that guard alone cannot be trusted to fire.
+    client = new BackendClient("node", [neverReadyFixturePath], process.cwd(), () => {}, 50);
+    await client.start().catch(() => undefined);
+
+    await expect(client.call("echo", { value: "x" })).rejects.toThrow(BackendUnavailableError);
+  });
+
   it("rejects start() promptly (not after the full readiness timeout) when the spawn fails", async () => {
     // Regression: before the child.on("error", ...) handler settled
     // readiness directly, a failed spawn (ENOENT) relied solely on 'exit'
