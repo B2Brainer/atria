@@ -207,19 +207,22 @@ class AIProviderAdapter(AIProviderPort):
             return None
 
         error: ProviderResponseError | None = None
-        input_tokens = output_tokens = None
+        cost = input_tokens = output_tokens = None
         try:
             input_tokens = usage["prompt_tokens"]
             output_tokens = usage["completion_tokens"]
-        except KeyError as exc:
+            input_price, output_price = pricing
+            cost = (input_tokens * input_price + output_tokens * output_price) / Decimal(
+                1_000_000
+            )
+        except (KeyError, TypeError) as exc:
+            # TypeError also covers a non-dict `usage` (unsubscriptable) and
+            # non-numeric token counts (arithmetic against a Decimal price).
             error = ProviderResponseError(
                 f"provider response usage data could not be parsed: {exc}"
             )
         if error is not None:
             raise error
-
-        input_price, output_price = pricing
-        cost = (input_tokens * input_price + output_tokens * output_price) / Decimal(1_000_000)
 
         return ExecutionMetrics(
             input_tokens=input_tokens,

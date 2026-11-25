@@ -153,6 +153,18 @@ def test_execute_leaves_metrics_none_when_the_response_carries_no_usage_data():
     assert result.metrics is None
 
 
+def test_execute_raises_when_usage_data_is_malformed_instead_of_merely_missing():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_success_payload(usage="not an object"))
+
+    adapter = AIProviderAdapter(
+        _configurations(), _FakeCredentialPort({"openai-key": "sk-secret"}), client=_client(handler)
+    )
+
+    with pytest.raises(ProviderResponseError):
+        adapter.execute(_request())
+
+
 def test_execute_leaves_metrics_none_when_the_requested_model_has_no_pricing_entry():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
