@@ -101,6 +101,26 @@ for pkg in core adapters api; do
   find "$BACKEND_DIR/$pkg" -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
 done
 
+echo "==> Ad-hoc signing the bundled runtime's executables and native extensions"
+# Apple Silicon requires every executed Mach-O to carry a code signature,
+# ad-hoc or not. `uv python install`'s distributed CPython build, and the
+# compiled extension modules pip installs into it (notably
+# pyobjc-framework-security's .so bridge), ship with none at all ("code
+# object is not signed at all" per `codesign -dv`) -- confirmed on this
+# build. On Intel this is silently tolerated; on arm64 it is not: the
+# packaged backend process is killed by the kernel immediately after it
+# starts loading such code, with no exit code and no Python traceback to
+# explain why (this is what the desktop-package-smoke CI job's first real
+# run on a macOS arm64 runner caught). electron-builder's own app signing
+# does not reach into extraResources, so this runtime must sign itself.
+# A plain ad-hoc signature (no identity, no entitlements) is sufficient --
+# this is independent of, and does not require, the outer .app's own
+# signing/hardened-runtime configuration.
+find "$PYTHON_DIST_DIR" \( -name '*.so' -o -name '*.dylib' \) -print0 \
+  | xargs -0 -I{} codesign --force --sign - "{}"
+find "$PYTHON_DIST_DIR/bin" -type f -perm -u+x -print0 \
+  | xargs -0 -I{} codesign --force --sign - "{}"
+
 echo "==> Verifying the bundled runtime imports the bundled backend source"
 # BACKEND_DIR reaches the interpreter via its environment, not by string-
 # interpolating a shell variable into inline Python source (which would

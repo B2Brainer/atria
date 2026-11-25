@@ -91,6 +91,9 @@ jobs:
             echo "error: no .app bundle found under desktop/dist" >&2
             exit 1
           fi
+          echo "===== codesign status (diagnostic) ====="
+          codesign -dv --verbose=4 "$APP_PATH" 2>&1 || true
+          codesign -dv --verbose=4 "$APP_PATH/Contents/Resources/python-dist/bin/python3" 2>&1 || true
           echo "==> launching $APP_PATH"
           BACKEND_LOG="$HOME/Library/Application Support/Atria/logs/atria-backend.log"
           MAIN_LOG="$HOME/Library/Logs/Atria/atria-main.log"
