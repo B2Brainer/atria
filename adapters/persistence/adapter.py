@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+import uuid
 from pathlib import Path
 from uuid import UUID
 
@@ -96,7 +97,15 @@ class PersistenceAdapter(PersistencePort):
         backups_dir.mkdir(parents=True, exist_ok=True)
         os.chmod(backups_dir, 0o700)
         db_name = Path(self._db_path).name
-        backup_path = backups_dir / f"{db_name}.{time.strftime('%Y%m%dT%H%M%S')}.bak"
+        # A short random suffix alongside the second-resolution timestamp:
+        # VACUUM INTO refuses to overwrite an existing destination file, so
+        # two backups within the same second (unlikely but not impossible --
+        # e.g. two short-lived PersistenceAdapter instances in quick
+        # succession) would otherwise collide and make the second one fail.
+        backup_path = (
+            backups_dir
+            / f"{db_name}.{time.strftime('%Y%m%dT%H%M%S')}.{uuid.uuid4().hex[:8]}.bak"
+        )
 
         # VACUUM INTO cannot run inside a transaction; SQLAlchemy's default
         # "begin once" connection mode would otherwise wrap it in one.

@@ -112,6 +112,10 @@ and pull request.
   a `backups/` directory alongside it, via SQLite's `VACUUM INTO` (correct
   regardless of journal mode — not a plain file copy, which can be
   inconsistent under WAL or a pending rollback journal). **Manual restore
-  procedure:** stop the application, replace the live database file (default
-  `atria.sqlite3`, or `ATRIA_DB_PATH`) with the chosen file from its
-  `backups/` subdirectory, then restart the application.
+  procedure:** stop the application, remove the live database file (default
+  `atria.sqlite3`, or `ATRIA_DB_PATH`) **and any `<name>-wal`/`<name>-shm`
+  sidecar files alongside it** (present only if SQLite was using WAL mode;
+  harmless to remove when absent — leaving a stale one risks it being
+  replayed against the restored file on next open), replace it with the
+  chosen file from the `backups/` subdirectory, then restart the
+  application.

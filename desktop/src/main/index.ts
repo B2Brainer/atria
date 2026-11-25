@@ -62,10 +62,14 @@ async function startBackend(): Promise<void> {
 
   if (process.env.ATRIA_PYTHON != null) {
     // Test/override hook (established in Increment 5): an explicit
-    // interpreter path, invoked directly with no `uv run` wrapper.
+    // interpreter path, invoked directly with no `uv run` wrapper. Still
+    // respects app.isPackaged for cwd: a packaged build has no repository
+    // checkout at all, so an operator debugging a packaged build with a
+    // custom interpreter still needs the bundled backend source's cwd, not
+    // repoRoot (which would not exist).
     pythonCommand = process.env.ATRIA_PYTHON;
     pythonArgs = ["-m", "api"];
-    cwd = repoRoot;
+    cwd = app.isPackaged ? packagedBackendDir : repoRoot;
   } else if (app.isPackaged) {
     // Packaged build (Increment 6): spawn the bundled, standalone Python
     // runtime against the bundled backend source — no `uv`/dev Python
