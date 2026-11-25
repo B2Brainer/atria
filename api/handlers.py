@@ -22,6 +22,8 @@ module in a response, a masked form notwithstanding.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
+from typing import Any
 from uuid import UUID
 
 from core.interaction.models import InteractionRequest
@@ -101,7 +103,7 @@ OPERATIONS = (
 )
 
 
-def dispatch_table(handlers: Handlers) -> dict[str, object]:
+def dispatch_table(handlers: Handlers) -> dict[str, Callable[..., Any]]:
     # The single source of truth for "which bound method answers which RPC
     # method name" — OPERATIONS alone, never a second, independently
     # maintained literal (api/__main__.py and tests previously each kept

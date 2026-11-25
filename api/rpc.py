@@ -41,7 +41,13 @@ class RpcDispatcher:
 
     def dispatch(self, message: dict) -> dict | None:
         if not isinstance(message, dict):
-            logger.warning("malformed JSON-RPC message (not an object): %r", message)
+            # Never log the message's own content: a non-object line could
+            # itself be a bare secret-shaped string (e.g. a client mistake
+            # sending a raw value instead of a JSON-RPC envelope), and this
+            # path has no way to know. Only its type is safe to report.
+            logger.warning(
+                "malformed JSON-RPC message: expected an object, got %s", type(message).__name__
+            )
             return _error(None, "malformed JSON-RPC message: expected an object")
 
         request_id = message.get("id")

@@ -19,11 +19,22 @@ from tests.fakes import FakeAIProviderPort
 
 
 def test_dispatch_table_covers_exactly_the_seven_operations(handlers):
-    from api.handlers import OPERATIONS
+    # A literal expected set, independent of OPERATIONS: comparing against
+    # OPERATIONS itself would be true by construction of dispatch_table and
+    # would never catch an accidental addition/removal to OPERATIONS.
+    expected = {
+        "initiate",
+        "get",
+        "list_by_cycle",
+        "list_cycles",
+        "set_credential",
+        "get_credential_status",
+        "remove_credential",
+    }
 
     table = dispatch_table(handlers)
 
-    assert set(table.keys()) == set(OPERATIONS)
+    assert set(table.keys()) == expected
     assert all(callable(fn) for fn in table.values())
 
 

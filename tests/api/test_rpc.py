@@ -60,6 +60,28 @@ def test_a_valid_json_non_object_line_is_a_protocol_error_not_a_crash():
         assert "error" in response and "result" not in response
 
 
+def test_a_non_object_message_is_never_logged_verbatim(caplog):
+    # A non-object line could itself be a bare secret-shaped string (a
+    # client mistake sending a raw value instead of an envelope) — the log
+    # line must report only the message's type, never its content.
+    dispatcher = RpcDispatcher({})
+    secret_shaped = "test-this-must-never-appear-in-a-log-line"
+
+    with caplog.at_level("WARNING"):
+        dispatcher.dispatch(secret_shaped)
+
+    assert secret_shaped not in caplog.text
+    assert "str" in caplog.text
+
+
+def test_credential_methods_are_exactly_the_three_credential_operations():
+    from api.handlers import OPERATIONS
+    from api.rpc import _CREDENTIAL_METHODS
+
+    assert _CREDENTIAL_METHODS == {"set_credential", "get_credential_status", "remove_credential"}
+    assert _CREDENTIAL_METHODS <= set(OPERATIONS)
+
+
 def test_credential_operation_exceptions_are_redacted_not_passed_through():
     # Any failure from set_credential/get_credential_status/remove_credential
     # returns a fixed, generic message — never str(exc) — since a future
