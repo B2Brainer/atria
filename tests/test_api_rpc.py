@@ -74,7 +74,8 @@ def test_a_non_object_message_is_never_logged_verbatim(caplog):
     dispatcher = RpcDispatcher({})
     secret_shaped = "test-this-must-never-appear-in-a-log-line"
 
-    with caplog.at_level("WARNING"):
+    # level=0 (NOTSET) captures every level, not just WARNING-and-above.
+    with caplog.at_level(0):
         dispatcher.dispatch(secret_shaped)
 
     assert secret_shaped not in caplog.text
@@ -98,12 +99,13 @@ def test_credential_operation_exceptions_are_redacted_not_passed_through(caplog)
     # line too, not just the RPC response: rpc.py redacts both.
     secret = "test-should-never-appear"
 
-    def leaky_set_credential(provider_id: str, secret: str) -> None:
-        raise RuntimeError(f"failed storing {secret!r} for {provider_id!r}")
+    def leaky_set_credential(provider_id: str, submitted_secret: str) -> None:
+        raise RuntimeError(f"failed storing {submitted_secret!r} for {provider_id!r}")
 
     dispatcher = RpcDispatcher({"set_credential": leaky_set_credential})
 
-    with caplog.at_level("WARNING"):
+    # level=0 (NOTSET) captures every level, not just WARNING-and-above.
+    with caplog.at_level(0):
         response = dispatcher.dispatch(
             {
                 "id": 1,
@@ -114,6 +116,7 @@ def test_credential_operation_exceptions_are_redacted_not_passed_through(caplog)
 
     assert secret not in json.dumps(response)
     assert response["error"]["message"] == "credential operation failed"
+    assert len(caplog.records) == 1  # a record WAS emitted — not just secret-free if present
     assert secret not in caplog.text
     assert "failed storing" not in caplog.text  # the leaky exception's own message
 
@@ -130,8 +133,10 @@ def test_every_output_line_is_well_formed_json_only_protocol_messages():
 
     serve(dispatcher, in_stream, out_stream)
 
-    for line in out_stream.getvalue().splitlines():
-        if not line:
-            continue
-        parsed = json.loads(line)  # raises if any line is not well-formed JSON
+    lines = out_stream.getvalue().split("\n")
+    assert lines[-1] == ""  # every written line ends in \n; no partial trailing line
+    for line in lines[:-1]:
+        # A blank line would itself be a framing break (not well-formed
+        # JSON) — it must fail here, not be silently tolerated.
+        parsed = json.loads(line)
         assert isinstance(parsed, dict)  # a JSON-RPC message, not a bare scalar/array
