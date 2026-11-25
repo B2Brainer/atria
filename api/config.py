@@ -11,8 +11,17 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
+from pathlib import Path
 
 from core.interaction.models import ProviderConfiguration
+
+# The repository root: api/config.py -> api/ -> repo root. Used as the
+# default database location so persistence (and therefore conversation
+# history, per Increment 5's relaunch-persistence requirement) is not
+# silently cwd-dependent — a desktop app launched from a different working
+# directory than a prior run would otherwise open a different, "empty"
+# database instead of the one holding its history.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # provider_id -> (default endpoint, env var overriding it). `credential_reference`
 # is derived per provider_id, not independently configurable: it is purely an
@@ -42,7 +51,7 @@ def load_providers() -> Mapping[str, ProviderConfiguration]:
 
 
 def db_path() -> str:
-    return os.environ.get("ATRIA_DB_PATH", os.path.join(os.getcwd(), "atria.sqlite3"))
+    return os.environ.get("ATRIA_DB_PATH", str(_REPO_ROOT / "atria.sqlite3"))
 
 
 def keychain_service() -> str:
